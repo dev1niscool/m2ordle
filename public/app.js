@@ -49,7 +49,7 @@ function releaseImage(){
 }
 function home() {
   navigation++;generation++;screen='home';guessPicker=null;imageLoading=false;setBusy(false);closeModal();releaseImage();
-  app.innerHTML=`<section class="title-screen"><h1><img class="wordmark" src="./assets/m2ordle.svg" alt="M2ordle" width="700" height="222"></h1><p class="tagline">ONE CLASSMATE. FIVE GUESSES.</p><button class="play-button"><span class="play-icon" aria-hidden="true"></span>PLAY</button><nav class="home-nav" aria-label="Game information"><button class="text-button" data-action="help">${icon('help')}How to play</button><button class="text-button" data-action="stats">${icon('stats')}Stats</button><button class="text-button" data-action="leaders">${icon('trophy')}Leaderboard</button></nav><div class="home-foot">A LITTLE CLOSER TO YOUR CLASS. <span aria-hidden="true">·</span> <a href="./admin.html">ADMIN</a></div></section>`;
+  app.innerHTML=`<section class="title-screen"><h1><img class="wordmark" src="./assets/m2ordle.svg?v=2" alt="M2ordle" width="700" height="180"></h1><p class="tagline">Guess the classmate</p><button class="play-button"><span class="play-icon" aria-hidden="true"></span>PLAY</button><nav class="home-nav" aria-label="Game information"><button class="text-button" data-action="help">${icon('help')}How to play</button><button class="text-button" data-action="stats">${icon('stats')}Stats</button><button class="text-button" data-action="leaders">${icon('trophy')}Leaderboard</button></nav></section>`;
   app.querySelector('.play-button').onclick=start;
   app.querySelector('[data-action=help]').onclick=help;
   app.querySelector('[data-action=stats]').onclick=showStats;
@@ -81,12 +81,12 @@ async function renderGame() {
   const thisGeneration=++generation;
   releaseImage();guessPicker=null;imageLoading=false;
   if(!game.available){
-    app.innerHTML='<section class="empty-screen"><img class="wordmark" src="./assets/m2ordle.svg" alt="M2ordle"><div class="empty-icon" aria-hidden="true">＋</div><h1>Today’s frame is on its way.</h1><p>Check again, or contact Devin to update today’s M2ordle.</p><button class="pixel-button primary" data-retry>CHECK AGAIN</button><button class="text-button" data-home>Back to home</button></section>';
+    app.innerHTML='<section class="empty-screen"><img class="wordmark" src="./assets/m2ordle.svg?v=2" alt="M2ordle"><div class="empty-icon" aria-hidden="true">＋</div><h1>Today’s frame is on its way.</h1><p>Check again, or contact Devin to update today’s M2ordle.</p><button class="pixel-button primary" data-retry>CHECK AGAIN</button><button class="text-button" data-home>Back to home</button></section>';
     app.querySelector('[data-retry]').onclick=start;app.querySelector('[data-home]').onclick=home;return;
   }
   const finished=game.status!=='playing';
   imageLoading=true;
-  app.innerHTML=`<section class="game"><header class="game-header"><button class="icon-button" data-home aria-label="Back to home">${icon('back')}</button><img class="mini-logo" src="./assets/m2ordle.svg" alt="M2ordle"><button class="icon-button" data-help aria-label="How to play">${icon('help')}</button></header><div class="puzzle-label"><span data-number></span><span>DAILY CLASS PORTRAIT</span></div><div class="photo-frame loading"><img alt="${finished?'Today’s revealed class portrait':'A cropped detail of today’s classmate'}"></div><div class="play-area"></div><p class="feedback" role="status"></p><ol class="guess-history" aria-label="Your guesses"></ol></section>`;
+  app.innerHTML=`<section class="game"><header class="game-header"><button class="icon-button" data-home aria-label="Back to home">${icon('back')}</button><img class="mini-logo" src="./assets/m2ordle.svg?v=2" alt="M2ordle"><button class="icon-button" data-help aria-label="How to play">${icon('help')}</button></header><div class="puzzle-label"><span data-number></span><span>DAILY CLASS PORTRAIT</span></div><div class="photo-frame loading"><img alt="${finished?'Today’s revealed class portrait':'A cropped detail of today’s classmate'}"></div><div class="play-area"></div><p class="feedback" role="status"></p><ol class="guess-history" aria-label="Your guesses"></ol></section>`;
   app.querySelector('[data-home]').onclick=home;app.querySelector('[data-help]').onclick=help;app.querySelector('[data-number]').textContent=`M2ORDLE #${game.number}`;
   const area=app.querySelector('.play-area');
   if(finished){
