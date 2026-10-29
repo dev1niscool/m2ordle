@@ -182,7 +182,7 @@ export class M2ordle {
     const entries = this.all('SELECT person_id AS personId,SUM(points) AS points,SUM(won) AS wins,COUNT(*) AS played,AVG(attempts) AS averageGuesses FROM claims GROUP BY person_id')
       .map(row => ({...row, name: this.people.get(row.personId)?.name || 'Classmate'}))
       .sort((a, b) => b.points - a.points || b.wins - a.wins || a.averageGuesses - b.averageGuesses || a.name.localeCompare(b.name));
-    return {date, nextReset: nextCentralMidnight(now), entries: entries.map((row, index) => ({rank: index + 1, ...row}))};
+    return {date, nextReset: nextCentralMidnight(now), entries: entries.map((row, index) => ({rank: index + 1, ...row, isYou: row.personId === claim.person_id}))};
   }
   async body(request) {
     const maxLength = new URL(request.url).pathname === '/api/admin/puzzle' ? 6500000 : 4096;

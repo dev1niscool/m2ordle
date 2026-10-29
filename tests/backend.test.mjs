@@ -263,10 +263,18 @@ test('leaderboard claims require a completed game and the private table; scores 
   await f.guess(b.token);
   assert.equal((await f.call('claim', claim, b.token)).code, 409);
   assert.equal((await f.call('claim', {personId: other.id, table: other.table}, b.token)).code, 200);
+  // Display names can coincide; the current player must be identified by roster ID.
+  f.room.people.set(identity.id, {...identity, name: 'Same Display Name'});
+  f.room.people.set(other.id, {...other, name: 'Same Display Name'});
   const board = await f.call('leaderboard', undefined, a.token);
   assert.deepEqual(board.entries.map(entry => [entry.rank, entry.points, entry.wins]), [[1, 5, 1], [2, 4, 1]]);
   assert.equal(board.entries[0].averageGuesses, 1);
   assert.equal('table' in board.entries[0], false);
+  assert.ok(board.entries.every(entry => typeof entry.isYou === 'boolean'));
+  assert.deepEqual(board.entries.filter(entry => entry.isYou).map(entry => entry.personId), [identity.id]);
+  const otherBoard = await f.call('leaderboard', undefined, b.token);
+  assert.deepEqual(otherBoard.entries.filter(entry => entry.isYou).map(entry => entry.personId), [other.id]);
+  assert.deepEqual(otherBoard.entries.map(({isYou, ...entry}) => entry), board.entries.map(({isYou, ...entry}) => entry));
 });
 
 test('leaderboard reads require this session to finish and verify today’s result', async t => {
@@ -295,6 +303,7 @@ test('leaderboard reads require this session to finish and verify today’s resu
   assert.equal(board.date, TODAY);
   assert.equal(board.nextReset, '2026-10-30T05:00:00.000Z');
   assert.equal(board.entries[0].name, identity.name);
+  assert.deepEqual(board.entries.filter(entry => entry.isYou).map(entry => entry.personId), [identity.id]);
   const other = await f.start();
   assert.equal((await f.call('leaderboard', undefined, other.token)).code, 403);
 });
@@ -321,6 +330,7 @@ test('leaderboard access resets at Central midnight and a verified loss unlocks 
   assert.equal(board.date, '2026-10-30');
   assert.equal(board.nextReset, '2026-10-31T05:00:00.000Z');
   assert.deepEqual(board.entries.map(({points, wins, played}) => ({points, wins, played})), [{points: 5, wins: 1, played: 2}]);
+  assert.deepEqual(board.entries.filter(entry => entry.isYou).map(entry => entry.personId), [identity.id]);
 });
 
 test('table guessing limits survive restarts and apply across sessions on the same IP', async t => {

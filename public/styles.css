@@ -57,6 +57,20 @@ input{font-size:18px}
 .leaderboard-table{font-size:14px}
 .leaderboard-table th{font-size:11px;letter-spacing:.4px}
 .leaderboard-empty{font-size:15px}
+dialog.leaderboard-dialog[open]{display:flex;flex-direction:column;overflow:hidden}
+.leaderboard-dialog .modal-top{flex-shrink:0}
+.leaderboard-dialog .modal-body{display:flex;flex-direction:column;min-height:0}
+.leaderboard-dialog .leaderboard-intro,.leaderboard-dialog .help-note{flex-shrink:0}
+.leaderboard-scroll{overflow:auto;overscroll-behavior:contain;min-height:0;max-height:52svh}
+.leaderboard-table thead{position:sticky;top:0;z-index:1;background:#211732}
+.leaderboard-table .is-you td{background:#344121;color:var(--lime);border-top:1px solid var(--lime);border-bottom:1px solid var(--lime)}
+.leaderboard-table .is-you td:first-child{box-shadow:inset 3px 0 var(--lime);padding-left:9px}
+.leaderboard-you{display:inline-block;vertical-align:middle;padding:2px 4px;margin-left:4px;background:var(--lime);color:var(--ink);font-size:10px;font-weight:700;letter-spacing:.5px}
+@media(max-height:560px){
+  .leaderboard-dialog .leaderboard-intro{display:none}
+  .leaderboard-dialog .modal-top{margin-bottom:12px}
+  .leaderboard-dialog .help-note{margin-bottom:0;font-size:11px;line-height:1.5}
+}
 .help-list{font-size:16px;line-height:1.7}
 .help-note{font-size:14px;line-height:1.7}
 .toast{font-size:15px;line-height:1.4}

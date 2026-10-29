@@ -219,6 +219,7 @@ function verifyIdentity(person){
 }
 function lockedLeaderboard(body){
   delete body.dataset.leaderboardReset;
+  body.closest('dialog').classList.remove('leaderboard-dialog');
   body.innerHTML='<p class="identity-copy">Finish today’s M2ordle, then add your name and verify your table number to view the classwide leaderboard.</p><p class="help-note">Unlock the cumulative standings each day by adding that day’s result. Completed games count whether you solve the portrait or use all five guesses.</p><button class="pixel-button primary wide">OPEN TODAY’S M2ORDLE</button>';
   body.querySelector('button').onclick=()=>{closeModal();start();};
 }
@@ -227,8 +228,27 @@ async function leaderboard(){
   if(!token){lockedLeaderboard(body);return;}
   try{const data=await api('/api/leaderboard');if(!body.isConnected)return;body.dataset.leaderboardReset=data.nextReset;body.querySelector('[data-loading]').remove();
     if(!data.entries.length){const empty=document.createElement('p');empty.className='leaderboard-empty';empty.textContent='A fresh start for the class. Finish a puzzle and add your result to claim the first spot.';body.append(empty);return;}
+    body.closest('dialog').classList.add('leaderboard-dialog');
+    const standings=document.createElement('div');standings.className='leaderboard-scroll';standings.tabIndex=0;standings.setAttribute('role','region');standings.setAttribute('aria-label','Classwide leaderboard standings');
     const table=document.createElement('table');table.className='leaderboard-table';table.innerHTML='<thead><tr><th scope="col">#</th><th scope="col">CLASSMATE</th><th scope="col">WINS</th><th scope="col">PTS</th></tr></thead><tbody></tbody>';
-    for(const entry of data.entries){const row=document.createElement('tr');for(const [value,cls] of [[entry.rank,''],[entry.name,''],[entry.wins,''],[entry.points,'points']]){const cell=document.createElement('td');cell.textContent=value;cell.className=cls;row.append(cell);}table.querySelector('tbody').append(row);}body.append(table);const note=document.createElement('p');note.className='help-note';note.textContent='Ties break by wins, then average guesses. One verified result per classmate per day.';body.append(note);
+    let yourRow=null;
+    for(const entry of data.entries){
+      const row=document.createElement('tr');
+      for(const [value,cls] of [[entry.rank,''],[entry.name,'name'],[entry.wins,''],[entry.points,'points']]){const cell=document.createElement('td');cell.textContent=value;cell.className=cls;row.append(cell);}
+      if(entry.isYou){
+        row.className='is-you';row.setAttribute('aria-current','true');yourRow=row;
+        const badge=document.createElement('span');badge.className='leaderboard-you';badge.textContent='YOU';row.querySelector('.name').append(document.createTextNode(' '),badge);
+      }
+      table.querySelector('tbody').append(row);
+    }
+    standings.append(table);body.append(standings);
+    const note=document.createElement('p');note.className='help-note';note.textContent='Ties break by wins, then average guesses. One verified result per classmate per day.';body.append(note);
+    requestAnimationFrame(()=>{
+      if(!yourRow?.isConnected)return;
+      const row=yourRow.getBoundingClientRect(),frame=standings.getBoundingClientRect(),headerHeight=table.tHead.getBoundingClientRect().height;
+      // Scroll only the standings, leaving the page and dialog controls in place.
+      standings.scrollTop+=row.top-frame.top-standings.clientTop-headerHeight-(standings.clientHeight-headerHeight-row.height)/2;
+    });
   }catch(error){if(body.isConnected){if(error.status===401||error.status===403)lockedLeaderboard(body);else body.querySelector('[data-loading]').textContent=error.message;}}
 }
 async function checkReset(){
