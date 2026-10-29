@@ -1,0 +1,13 @@
+{
+  "$schema":"node_modules/wrangler/config-schema.json",
+  "name":"m2ordle-api",
+  "account_id":"6bbc9a6a0a2dd5cdf8b52421b9dde796",
+  "main":"server/worker.js",
+  "compatibility_date":"2026-09-01",
+  "workers_dev":true,
+  "preview_urls":false,
+  "assets":{"directory":"./dist-worker","binding":"ASSETS","run_worker_first":true},
+  "durable_objects":{"bindings":[{"name":"M2ORDLE","class_name":"M2ordle"}]},
+  "migrations":[{"tag":"v1","new_sqlite_classes":["M2ordle"]}],
+  "vars":{"ALLOWED_ORIGINS":"http://localhost:8788,http://127.0.0.1:8788,https://dev1niscool.github.io","SHARE_URL":"https://dev1niscool.github.io/m2ordle"}
+}

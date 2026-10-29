@@ -1,0 +1,252 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import worker, {M2ordle} from '../server/worker.js';
+import roster from '../server/roster.json' with {type: 'json'};
+import photos from '../server/photos.json' with {type: 'json'};
+import {centralDate, nextCentralMidnight, calculateStats} from '../server/core.js';
+
+const ADMIN = 'fixture-admin-password-more-than-20-characters';
+const JPEG = 'data:image/jpeg;base64,' + Buffer.from([255, 216, ...Array(24).fill(0), 255, 217]).toString('base64');
+const TODAY = '2026-10-29';
+const ANSWER = roster[0];
+const PHOTO = photos[0].photos[0];
+function puzzle(date = TODAY, extra = {}) {
+  return {date, personId: ANSWER.id, photoId: PHOTO.id, crops: [.12, .25, .45, .7, 1].map(size => ({x: 0, y: 0, size})), images: Array(5).fill(JPEG), reveal: JPEG, published: true, ...extra};
+}
+function fixture(t, env = {}) {
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  const sql = {exec(query, ...args) {
+    if (query.includes('CREATE TABLE')) { db.exec(query); return {toArray: () => []}; }
+    const statement = db.prepare(query);
+    if (statement.columns().length) return {toArray: () => statement.all(...args)};
+    statement.run(...args); return {toArray: () => []};
+  }};
+  const ctx = {storage: {sql, transactionSync(fn) {
+    db.exec('BEGIN');
+    try { const result = fn(); db.exec('COMMIT'); return result; }
+    catch (error) { db.exec('ROLLBACK'); throw error; }
+  }}};
+  const config = {ADMIN_PASSWORD: ADMIN, ...env};
+  let now = Date.parse(TODAY + 'T17:00:00Z');
+  let room;
+  function restart() { room = new M2ordle(ctx, config); room.now = () => now; }
+  restart();
+  async function raw(path, body, token, ip = 'fixture') {
+    return room.fetch(new Request('https://m2ordle.test' + path, {method: body === undefined ? 'GET' : 'POST', headers: {'Content-Type': 'application/json', 'CF-Connecting-IP': ip, ...(token ? {Authorization: 'Bearer ' + token} : {})}, ...(body === undefined ? {} : {body: JSON.stringify(body)})}));
+  }
+  async function call(path, body, token, ip) {
+    const response = await raw('/api/' + path, body, token, ip);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    return {code: response.status, ...await response.json()};
+  }
+  async function publish(date = TODAY, extra) { return call('admin/puzzle', puzzle(date, extra), ADMIN); }
+  async function start(ip) {
+    const session = await call('session', {}, undefined, ip);
+    assert.equal(session.code, 201);
+    return {token: session.token, game: await call('game', undefined, session.token, ip)};
+  }
+  let request = 0;
+  async function guess(token, personId = ANSWER.id, extra = {}) { return call('guess', {personId, requestId: 'fixture-' + ++request, ...extra}, token); }
+  return {db, ctx, config, raw, call, publish, start, guess, restart, setTime: value => {now = Date.parse(value);}, get room() {return room;}};
+}
+
+test('Central dates and midnight resets handle both DST transitions', () => {
+  assert.equal(centralDate('2026-10-30T04:59:59Z'), '2026-10-29');
+  assert.equal(centralDate('2026-10-30T05:00:00Z'), '2026-10-30');
+  assert.equal(nextCentralMidnight('2026-03-08T06:00:00Z'), '2026-03-09T05:00:00.000Z');
+  assert.equal(nextCentralMidnight('2026-11-01T05:00:00Z'), '2026-11-02T06:00:00.000Z');
+  assert.equal(nextCentralMidnight('2026-03-07T18:00:00Z'), '2026-03-08T06:00:00.000Z');
+});
+
+test('empty days explain missing content; roster never exposes table assignments', async t => {
+  const f = fixture(t);
+  assert.equal((await f.call('health')).ok, true);
+  assert.equal((await f.call('game')).code, 401);
+  const {game} = await f.start();
+  assert.equal(game.available, false);
+  assert.match(game.message, /contact Devin/);
+  const publicRoster = await f.call('roster');
+  assert.equal(publicRoster.people.length, roster.length);
+  assert.deepEqual(Object.keys(publicRoster.people[0]).sort(), ['id', 'name']);
+  assert.equal((await f.call('admin/photos')).code, 401);
+  assert.equal((await f.call('admin/puzzle?date=' + TODAY)).code, 401);
+  assert.equal((await f.call('admin/auth', undefined, ADMIN)).code, 200);
+});
+
+test('admin validates dates, crop bounds, progression, portraits and JPEG payloads', async t => {
+  const f = fixture(t);
+  assert.equal((await f.publish('2026-02-30')).code, 400);
+  assert.equal((await f.publish(TODAY, {photoId: 'unknown'})).code, 400);
+  assert.equal((await f.publish(TODAY, {crops: [.5, .4, .6, .8, 1].map(size => ({x: 0, y: 0, size}))})).code, 400);
+  assert.equal((await f.publish(TODAY, {crops: Array(5).fill({x: 0, y: .9, size: 1})})).code, 400);
+  assert.equal((await f.publish(TODAY, {images: Array(5).fill('data:image/jpeg;base64,eHl6')})).code, 400);
+  assert.equal((await f.publish(TODAY, {published: false})).code, 200);
+  assert.equal((await f.start()).game.available, false);
+  assert.equal((await f.publish()).code, 200);
+  const result = await f.call('admin/calendar?month=2026-10', undefined, ADMIN);
+  assert.equal(result.days[0].name, ANSWER.name);
+  assert.equal(result.days[0].published, true);
+  assert.equal((await f.call('admin/calendar?month=2026-99', undefined, ADMIN)).code, 400);
+});
+
+test('guesses are server scored, retry safe, persistent and unlock only earned crops', async t => {
+  const f = fixture(t);
+  await f.publish();
+  const {token, game} = await f.start();
+  assert.equal(game.number, 1);
+  assert.equal(game.maxGuesses, 5);
+  assert.equal('answer' in game, false);
+  assert.equal('crops' in game, false);
+  assert.equal(JSON.stringify(game).includes(PHOTO.id), false);
+  assert.equal((await f.raw(game.image, undefined, token)).status, 200);
+  assert.equal((await f.raw('/api/image?date=' + TODAY + '&stage=1', undefined, token)).status, 403);
+  assert.equal((await f.raw('/api/image?date=' + TODAY + '&stage=reveal', undefined, token)).status, 403);
+  const body = {personId: roster[1].id, requestId: 'retry-request'};
+  const wrong = await f.call('guess', body, token);
+  assert.equal(wrong.guesses.length, 1);
+  assert.match(wrong.image, /stage=1$/);
+  assert.deepEqual(await f.call('guess', body, token), wrong);
+  assert.equal((await f.call('guess', {...body, personId: roster[2].id}, token)).code, 409);
+  assert.equal((await f.guess(token, roster[1].id)).code, 409);
+  assert.equal((await f.guess(token, 'invented')).code, 400);
+  assert.equal((await f.raw('/api/image?date=' + TODAY + '&stage=1', undefined, token)).status, 200);
+  assert.equal((await f.raw('/api/image?date=' + TODAY + '&stage=2', undefined, token)).status, 403);
+  const won = await f.guess(token);
+  assert.equal(won.status, 'won');
+  assert.equal(won.points, 4);
+  assert.equal(won.answer.name, ANSWER.name);
+  assert.match(won.image, /stage=reveal$/);
+  assert.equal((await f.raw(won.image, undefined, token)).status, 200);
+  assert.equal((await f.raw('/api/image?date=' + TODAY + '&stage=2', undefined, token)).status, 403);
+  assert.equal((await f.guess(token, roster[2].id)).code, 409);
+  f.restart();
+  assert.deepEqual(await f.call('game', undefined, token), won);
+  const stats = await f.call('stats', undefined, token);
+  assert.equal(stats.played, 1);
+  assert.equal(stats.wins, 1);
+  assert.deepEqual(stats.distribution, [0, 1, 0, 0, 0]);
+});
+
+test('exactly five wrong guesses end the puzzle and reveal the answer', async t => {
+  const f = fixture(t); await f.publish();
+  const {token} = await f.start();
+  let result;
+  for (let index = 1; index <= 5; index++) result = await f.guess(token, roster[index].id);
+  assert.equal(result.status, 'lost');
+  assert.equal(result.guesses.length, 5);
+  assert.equal(result.points, 0);
+  assert.equal(result.answer.name, ANSWER.name);
+  assert.equal((await f.guess(token)).code, 409);
+  const stats = await f.call('stats', undefined, token);
+  assert.equal(stats.todayFailed, 1);
+  assert.deepEqual(stats.todayDistribution, [0, 0, 0, 0, 0]);
+});
+
+test('leaderboard claims require a completed game and the private table; scores cannot be forged', async t => {
+  const f = fixture(t); await f.publish();
+  const a = await f.start(), b = await f.start();
+  const identity = roster[10], other = roster[11];
+  const claim = {personId: identity.id, table: identity.table, points: 9999, date: TODAY};
+  assert.equal((await f.call('claim', claim, a.token)).code, 409);
+  await f.guess(a.token);
+  assert.equal((await f.call('claim', {...claim, table: 999}, a.token)).code, 401);
+  const accepted = await f.call('claim', claim, a.token);
+  assert.equal(accepted.claimed.name, identity.name);
+  assert.deepEqual(await f.call('claim', claim, a.token), accepted);
+  assert.equal((await f.call('claim', {personId: other.id, table: other.table}, a.token)).code, 409);
+  await f.guess(b.token, roster[1].id);
+  await f.guess(b.token);
+  assert.equal((await f.call('claim', claim, b.token)).code, 409);
+  assert.equal((await f.call('claim', {personId: other.id, table: other.table}, b.token)).code, 200);
+  const board = await f.call('leaderboard');
+  assert.deepEqual(board.entries.map(entry => [entry.rank, entry.points, entry.wins]), [[1, 5, 1], [2, 4, 1]]);
+  assert.equal(board.entries[0].averageGuesses, 1);
+  assert.equal('table' in board.entries[0], false);
+});
+
+test('table guessing limits survive restarts and apply across sessions on the same IP', async t => {
+  const f = fixture(t); await f.publish();
+  const a = await f.start(); await f.guess(a.token);
+  const wrong = {personId: roster[8].id, table: 999};
+  for (let i = 0; i < 5; i++) assert.equal((await f.call('claim', wrong, a.token)).code, 401);
+  f.restart();
+  assert.equal((await f.call('claim', {...wrong, table: roster[8].table}, a.token)).code, 429);
+  for (let i = 0; i < 7; i++) {
+    const player = await f.start(); await f.guess(player.token);
+    assert.equal((await f.call('claim', wrong, player.token)).code, 401);
+  }
+  const blocked = await f.start(); await f.guess(blocked.token);
+  assert.equal((await f.call('claim', wrong, blocked.token)).code, 429);
+  f.setTime(TODAY + 'T17:16:00Z');
+  assert.equal((await f.call('claim', {...wrong, table: roster[8].table}, a.token)).code, 200);
+});
+
+test('admin throttles only failures, survives restarts, and caps concurrent attempts', async t => {
+  const f = fixture(t);
+  const valid = await Promise.all(Array.from({length: 24}, () => f.call('admin/photos', undefined, ADMIN)));
+  assert.ok(valid.every(result => result.code === 200));
+  const attempts = await Promise.all(Array.from({length: 24}, () => f.call('admin/auth', undefined, 'wrong')));
+  assert.equal(attempts.filter(result => result.code === 401).length, 8);
+  assert.equal(attempts.filter(result => result.code === 429).length, 16);
+  f.restart();
+  assert.equal((await f.call('admin/auth', undefined, ADMIN)).code, 429);
+  f.setTime(TODAY + 'T17:16:00Z');
+  assert.equal((await f.call('admin/auth', undefined, ADMIN)).code, 200);
+  f.config.ADMIN_PASSWORD = 'short';
+  assert.equal((await f.call('admin/auth', undefined, 'short')).code, 503);
+});
+
+test('storage failures roll back a guess, and played puzzles cannot change', async t => {
+  const f = fixture(t); await f.publish(); const {token} = await f.start();
+  const exec = f.room.sql.exec;
+  f.room.sql.exec = (query, ...args) => {if (query.startsWith('INSERT INTO guess_requests')) throw new Error('fixture failure'); return exec(query, ...args);};
+  assert.equal((await f.guess(token)).code, 500);
+  f.room.sql.exec = exec;
+  assert.equal((await f.call('game', undefined, token)).guesses.length, 0);
+  assert.equal((await f.publish()).code, 409);
+  assert.equal((await f.call('admin/puzzle?date=' + TODAY, undefined, ADMIN)).puzzle.locked, true);
+  assert.equal((await f.publish('2026-10-28')).code, 409);
+  assert.equal((await f.guess(token)).status, 'won');
+});
+
+test('Central rollover rejects stale submissions and puzzle numbers include skipped days', async t => {
+  const f = fixture(t); await f.publish(); await f.publish('2026-10-31');
+  const {token} = await f.start();
+  f.setTime('2026-10-31T05:00:00Z');
+  assert.equal((await f.guess(token, ANSWER.id, {date: TODAY})).code, 409);
+  assert.equal((await f.guess(token)).code, 409);
+  const next = await f.call('game', undefined, token);
+  assert.equal(next.number, 3);
+  assert.equal(next.date, '2026-10-31');
+  assert.equal((await f.guess(token, ANSWER.id, {date: '2026-10-31'})).status, 'won');
+  assert.equal((await f.call('claim', {personId: roster[3].id, table: roster[3].table, date: TODAY}, token)).code, 409);
+});
+
+test('original portraits require admin authentication even through encoded paths', async t => {
+  const f = fixture(t);
+  const env = {...f.config, ALLOWED_ORIGINS: 'https://class.test', M2ORDLE: {idFromName: name => name, get: () => ({fetch: request => f.room.fetch(request)})}, ASSETS: {fetch: () => new Response('portrait', {headers: {'Content-Type': 'image/jpeg'}})}};
+  for (const path of [PHOTO.path, PHOTO.path.replace('_portraits', '%5fportraits'), PHOTO.path.replace('_portraits', '%255fportraits')]) {
+    assert.equal((await worker.fetch(new Request('https://api.test' + path), env)).status, 401);
+  }
+  const portrait = await worker.fetch(new Request('https://api.test' + PHOTO.path, {headers: {Authorization: 'Bearer ' + ADMIN}}), env);
+  assert.equal(portrait.status, 200);
+  assert.equal(portrait.headers.get('Cache-Control'), 'private, no-store');
+  const denied = await worker.fetch(new Request('https://api.test/api/health', {headers: {Origin: 'https://evil.test'}}), env);
+  assert.equal(denied.status, 403);
+  const options = await worker.fetch(new Request('https://api.test/api/guess', {method: 'OPTIONS', headers: {Origin: 'https://class.test'}}), env);
+  assert.equal(options.status, 204);
+  assert.equal(options.headers.get('Access-Control-Allow-Origin'), 'https://class.test');
+});
+
+test('streaks break on missed or lost days and preserve yesterday’s ongoing streak', () => {
+  const won = date => ({date, status: 'won', guesses: JSON.stringify([{correct: true}])});
+  const rows = [won('2026-10-25'), won('2026-10-26'), won('2026-10-28')];
+  const result = calculateStats(rows, '2026-10-29', []);
+  assert.equal(result.streak, 1);
+  assert.equal(result.maxStreak, 2);
+  assert.equal(calculateStats(rows, '2026-10-30', []).streak, 0);
+  rows.push({date: '2026-10-29', status: 'lost', guesses: '[]'});
+  assert.equal(calculateStats(rows, '2026-10-29', []).streak, 0);
+});

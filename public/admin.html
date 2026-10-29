@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+  <meta name="theme-color" content="#17102e">
+  <title>M2ordle · Control room</title>
+  <link rel="icon" href="./favicon.svg">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./admin.css">
+</head>
+<body class="admin-page">
+  <div class="arcade-world" aria-hidden="true"><div class="stars"></div><div class="orb"></div><div class="mountains"></div><div class="grid-floor"></div></div>
+  <header class="admin-topbar">
+    <a class="admin-brand" href="./index.html">M2<span>ordle</span><small>CONTROL ROOM</small></a>
+    <nav aria-label="Admin navigation"><a class="admin-text-link" href="./index.html">Back to game</a><button id="lock-button" class="admin-button admin-button-small" hidden>Lock <span aria-hidden="true">↗</span></button></nav>
+  </header>
+  <main>
+    <section id="login-screen" class="admin-login">
+      <div class="admin-cross" aria-hidden="true">✚</div>
+      <p class="admin-eyebrow">OWNER ACCESS</p>
+      <h1>Behind the pixels.</h1>
+      <p class="admin-muted">Choose the classmate. Set the clues.<br>Make tomorrow’s M2ordle.</p>
+      <form id="login-form">
+        <label for="admin-password">Admin password</label>
+        <input id="admin-password" name="password" type="password" autocomplete="current-password" required minlength="20" spellcheck="false">
+        <button class="admin-button admin-primary" type="submit" id="unlock-button">UNLOCK <span aria-hidden="true">→</span></button>
+        <p id="login-message" class="admin-message" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section id="workspace" class="admin-workspace" hidden>
+      <aside class="admin-sidebar">
+        <section class="admin-panel calendar-panel" aria-label="Puzzle calendar">
+          <div class="calendar-title"><p class="admin-eyebrow">THE DAILY LINEUP</p><button class="admin-link-button" id="today-button">Today</button></div>
+          <div class="calendar-heading">
+            <button class="admin-icon-button" id="previous-month" aria-label="Previous month">←</button>
+            <label for="calendar-month" class="admin-sr-only">Calendar month</label><input id="calendar-month" type="month">
+            <button class="admin-icon-button" id="next-month" aria-label="Next month">→</button>
+          </div>
+          <div class="calendar-weekdays" aria-hidden="true"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+          <div id="calendar-days" class="calendar-days"></div>
+          <div class="calendar-legend"><span><i class="scheduled-dot"></i>Scheduled</span><span><i class="draft-dot"></i>Draft</span></div>
+          <p id="calendar-message" class="admin-message" role="status"></p>
+        </section>
+        <div class="admin-sidebar-note"><span aria-hidden="true">✦</span><p>Every new puzzle starts at <strong>midnight Central.</strong> Nothing scheduled? Players see a message to check back or contact Devin.</p></div>
+        <div class="admin-sidebar-note"><span aria-hidden="true">▧</span><p>Five guesses. Five square crops. Every wrong guess reveals a wider view. The full portrait appears when the game ends.</p></div>
+      </aside>
+      <section class="admin-editor" aria-label="Daily puzzle editor">
+        <div class="editor-heading"><div><p class="admin-eyebrow">BUILD A DAILY CHALLENGE</p><h1 id="selected-date-title"></h1></div><span id="puzzle-status" class="admin-status">NOT SET</span></div>
+        <p id="editor-message" class="admin-message editor-message" role="status" aria-live="polite"></p>
+        <section class="admin-panel setup-panel">
+          <div class="admin-section-title"><span class="step-number">01</span><div><h2>Pick a portrait</h2><p>Existing class groups, with every paired pose.</p></div><button id="change-portrait" class="admin-button admin-button-small" hidden>Change</button></div>
+          <div id="chosen-portrait-summary" class="chosen-portrait-summary" hidden><img id="chosen-portrait-thumb" alt="Selected portrait"><div><strong id="chosen-portrait-label"></strong><p class="admin-muted" id="chosen-portrait-detail"></p></div></div>
+          <div id="gallery-section">
+            <div class="gallery-toolbar"><label for="portrait-search" class="admin-sr-only">Find a portrait group by number</label><input id="portrait-search" type="search" placeholder="Find a portrait number…" autocomplete="off"><span id="gallery-count" class="admin-muted"></span></div>
+            <div id="portrait-gallery" class="portrait-gallery" aria-label="Class portraits"></div>
+            <div class="gallery-pagination"><button id="previous-gallery" class="admin-button admin-button-small">← Previous</button><span id="gallery-page" class="admin-muted"></span><button id="next-gallery" class="admin-button admin-button-small">Next →</button></div>
+          </div>
+          <div id="pose-section" hidden><p class="admin-field-label">CHOOSE A POSE</p><div id="pose-gallery" class="pose-gallery" aria-label="Alternate portraits"></div></div>
+        </section>
+        <section class="admin-panel identity-panel">
+          <div class="admin-section-title"><span class="step-number">02</span><div><h2>Who is it?</h2><p>Select their name from the class roster.</p></div></div>
+          <div class="admin-name-picker">
+            <label for="answer-name" class="admin-sr-only">Classmate’s name</label><input id="answer-name" type="text" autocomplete="off" placeholder="Start typing a first or last name…" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="answer-options" spellcheck="false">
+            <ul id="answer-options" class="admin-name-options" role="listbox" hidden></ul>
+          </div>
+          <p class="admin-answer-status" id="answer-status">Choose a name to set the answer.</p>
+        </section>
+        <section class="admin-panel crop-panel">
+          <div class="admin-section-title"><span class="step-number">03</span><div><h2>Frame the clues</h2><p>Drag the square. Zoom out a little more each time.</p></div></div>
+          <div id="crop-empty" class="crop-empty"><span aria-hidden="true">⌗</span><p>Choose a portrait to begin.</p></div>
+          <div id="crop-workspace" hidden>
+            <div class="crop-stage-top"><strong id="stage-title">CROP 1 OF 5</strong><span class="admin-muted">Drag to reposition</span></div>
+            <div class="crop-layout">
+              <div class="crop-source-wrap"><canvas id="source-canvas" tabindex="0" aria-label="Crop position. Drag or use the arrow keys to move the square; plus and minus resize it."></canvas><span class="canvas-label">ORIGINAL</span></div>
+              <div class="crop-preview-wrap"><canvas id="preview-canvas" width="640" height="640" aria-label="Player’s square crop preview"></canvas><span class="canvas-label">PLAYER’S VIEW</span></div>
+            </div>
+            <div class="crop-slider"><label for="crop-size">Crop size <output id="crop-size-value" for="crop-size"></output></label><input id="crop-size" type="range" min="0.04" max="1" step="0.005"><p class="admin-muted" id="crop-size-hint">Each clue must reveal a wider area than the one before.</p></div>
+            <div id="crop-stages" class="crop-stages" aria-label="Five playable crops"></div>
+            <div class="crop-navigation"><button id="previous-stage" class="admin-button admin-button-small">← Previous crop</button><button id="next-stage" class="admin-button admin-button-small">Next crop →</button></div>
+            <details class="reveal-details"><summary>Full-photo reveal</summary><canvas id="reveal-canvas" width="640" height="640" aria-label="Full portrait revealed after completion"></canvas><p class="admin-muted">Shown after a correct answer or the fifth wrong guess. It uses the same square frame.</p></details>
+          </div>
+        </section>
+        <footer class="editor-actions"><div><strong id="save-note">Ready when you are.</strong><p class="admin-muted">Drafts stay private. Published puzzles go live on their date.</p></div><div class="save-buttons"><button id="save-draft" class="admin-button" disabled>Save draft</button><button id="publish-puzzle" class="admin-button admin-primary" disabled>PUBLISH DAY <span aria-hidden="true">↗</span></button></div></footer>
+      </section>
+    </section>
+  </main>
+  <script src="./config.js"></script>
+  <script type="module" src="./admin.js"></script>
+</body>
+</html>

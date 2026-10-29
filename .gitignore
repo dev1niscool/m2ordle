@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-worker/
+.wrangler/
+.dev.vars
+.env*
+*.pdf
+M2_MOGGER_AI_HANDOFF.md
+private/
+server/roster.json
+server/photos.json
+tmp/
+.DS_Store
+artifacts/
