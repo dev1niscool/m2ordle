@@ -60,7 +60,7 @@ Table-number verification is the class check requested for the leaderboard, not 
 
 ## Files
 
-- `public/`: player and admin interfaces, CSS, clear wordmark, Billiken share artwork and app icons, reusable name picker.
+- `public/`: player and admin interfaces, CSS, clear wordmark, original pixel mascot share artwork and app icons, reusable name picker.
 - `server/worker.js`: API, private asset authorization, SQLite data model.
 - `server/core.js`: time-zone, crop validation, scoring, and stats logic.
 - `scripts/build.mjs`: separate explicit public and protected build outputs.
