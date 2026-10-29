@@ -8,6 +8,8 @@ Type a first or last name, choose a roster entry, and submit it. Each wrong gues
 
 Results include personal stats, today's class guess distribution, a Central Time countdown, and a large copy button. Shared results contain exactly five colored squares. A first-guess solve earns 5 points, then 4, 3, 2, or 1. Unsolved games earn 0. Verified daily results add to the cumulative leaderboard; ties use wins, then average guesses (a loss counts as 6), then name.
 
+Viewing the classwide leaderboard requires finishing today's M2ordle and submitting a table-verified result in the same browser. Both solved and unsolved completed games qualify. Access is checked by the server and resets at midnight Central Time; previous days' verified results keep their points but do not unlock today's standings.
+
 ## Schedule puzzles
 
 Open `admin.html` and enter the owner password. Select a date in the calendar, select a grouped portrait or alternate pose, and choose the person's name from the roster. The portraits are deliberately **not automatically identified**. Set five square crops by dragging or using arrow keys and adjusting the crop-size slider. Later crops must be at least as wide as earlier crops; they may move to a different area of the photo. The full-photo reveal is generated automatically in the same square frame.

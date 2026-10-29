@@ -190,7 +190,7 @@ async function results(){
   body.querySelector('[data-countdown]').textContent=countdown(game.nextReset);body.querySelector('.share-button').onclick=()=>copyResult(body);
   const claim=body.querySelector('[data-claim]');
   if(game.claimed){const note=document.createElement('p');note.className='claim-note';note.textContent=`✓ Added as ${game.claimed.name}`;claim.append(note);const button=document.createElement('button');button.className='text-button back-link';button.textContent='View leaderboard →';button.onclick=leaderboard;claim.append(button);}
-  else{const button=document.createElement('button');button.className='pixel-button wide claim-button';button.innerHTML=icon('trophy')+'ADD TO LEADERBOARD';button.onclick=identity;claim.append(button);}
+  else{const button=document.createElement('button');button.className='pixel-button wide claim-button';button.innerHTML=icon('trophy')+'<span>Add to classwide leaderboard</span>';button.onclick=identity;claim.append(button);}
   try{const stats=await api('/api/stats');if(!body.isConnected)return;body.querySelector('[data-stats]').replaceChildren();statsMarkup(body.querySelector('[data-stats]'),stats,body.querySelector('[data-distribution]'));}catch{if(body.isConnected)body.querySelector('[data-stats]').textContent='Stats are temporarily unavailable.';}
 }
 async function copyResult(body){
@@ -199,7 +199,7 @@ async function copyResult(body){
   catch{let area=body.querySelector('.copy-fallback');if(!area){area=document.createElement('textarea');area.className='copy-fallback';area.readOnly=true;area.setAttribute('aria-label','Result text to copy');body.querySelector('.result-bottom').after(area);}area.value=text;area.focus();area.select();toast('Select and copy your result below.');}
 }
 function identity(){
-  const body=modal('ADD YOUR RESULT');body.innerHTML='<p class="identity-copy">Choose your name to add this result to your cumulative class score.</p><form class="identity-form"><div data-identity></div><button class="pixel-button primary wide" disabled>CONTINUE</button></form><button class="text-button back-link">← Back to results</button>';
+  const body=modal('ADD YOUR RESULT');body.innerHTML='<p class="identity-copy">Choose your name, then verify your table number to add your result and unlock today’s classwide leaderboard.</p><form class="identity-form"><div data-identity></div><button class="pixel-button primary wide" disabled>CONTINUE</button></form><button class="text-button back-link">← Back to results</button>';
   const button=body.querySelector('form button');const picker=namePicker(body.querySelector('[data-identity]'),people,{label:'Your name',placeholder:'Find your name…',onSelect:p=>button.disabled=!p});body.querySelector('form').onsubmit=e=>{e.preventDefault();if(picker.selected)verifyIdentity(picker.selected);};body.querySelector('.back-link').onclick=results;picker.input.focus();
 }
 function verifyIdentity(person){
@@ -217,15 +217,23 @@ function verifyIdentity(person){
     }catch(error){if(body.isConnected&&currentNavigation===navigation){body.querySelector('.feedback').textContent=error.message;button.disabled=false;button.textContent='CONFIRM & ADD RESULT';}}
   };body.querySelector('input').focus();
 }
+function lockedLeaderboard(body){
+  delete body.dataset.leaderboardReset;
+  body.innerHTML='<p class="identity-copy">Finish today’s M2ordle, then add your name and verify your table number to view the classwide leaderboard.</p><p class="help-note">Unlock the cumulative standings each day by adding that day’s result. Completed games count whether you solve the portrait or use all five guesses.</p><button class="pixel-button primary wide">OPEN TODAY’S M2ORDLE</button>';
+  body.querySelector('button').onclick=()=>{closeModal();start();};
+}
 async function leaderboard(){
   const body=modal('CLASS LEADERBOARD');body.innerHTML='<p class="leaderboard-intro">Every M2ordle counts. Earn 5 points for a first-guess solve, down to 1 point on guess five.</p><p class="identity-copy" data-loading>Loading the class standings…</p>';
-  try{const data=await api('/api/leaderboard',{auth:false});if(!body.isConnected)return;body.querySelector('[data-loading]').remove();
+  if(!token){lockedLeaderboard(body);return;}
+  try{const data=await api('/api/leaderboard');if(!body.isConnected)return;body.dataset.leaderboardReset=data.nextReset;body.querySelector('[data-loading]').remove();
     if(!data.entries.length){const empty=document.createElement('p');empty.className='leaderboard-empty';empty.textContent='A fresh start for the class. Finish a puzzle and add your result to claim the first spot.';body.append(empty);return;}
     const table=document.createElement('table');table.className='leaderboard-table';table.innerHTML='<thead><tr><th scope="col">#</th><th scope="col">CLASSMATE</th><th scope="col">WINS</th><th scope="col">PTS</th></tr></thead><tbody></tbody>';
     for(const entry of data.entries){const row=document.createElement('tr');for(const [value,cls] of [[entry.rank,''],[entry.name,''],[entry.wins,''],[entry.points,'points']]){const cell=document.createElement('td');cell.textContent=value;cell.className=cls;row.append(cell);}table.querySelector('tbody').append(row);}body.append(table);const note=document.createElement('p');note.className='help-note';note.textContent='Ties break by wins, then average guesses. One verified result per classmate per day.';body.append(note);
-  }catch(error){if(body.isConnected)body.querySelector('[data-loading]').textContent=error.message;}
+  }catch(error){if(body.isConnected){if(error.status===401||error.status===403)lockedLeaderboard(body);else body.querySelector('[data-loading]').textContent=error.message;}}
 }
 async function checkReset(){
+  const board=activeDialog?.querySelector('[data-leaderboard-reset]');
+  if(board&&Date.now()>=new Date(board.dataset.leaderboardReset).getTime())lockedLeaderboard(board);
   if(!game||busy)return;
   if(Date.now()>=new Date(game.nextReset).getTime()&&screen==='game') {closeModal();game=null;await start();}
 }

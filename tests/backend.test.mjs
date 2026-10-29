@@ -263,10 +263,64 @@ test('leaderboard claims require a completed game and the private table; scores 
   await f.guess(b.token);
   assert.equal((await f.call('claim', claim, b.token)).code, 409);
   assert.equal((await f.call('claim', {personId: other.id, table: other.table}, b.token)).code, 200);
-  const board = await f.call('leaderboard');
+  const board = await f.call('leaderboard', undefined, a.token);
   assert.deepEqual(board.entries.map(entry => [entry.rank, entry.points, entry.wins]), [[1, 5, 1], [2, 4, 1]]);
   assert.equal(board.entries[0].averageGuesses, 1);
   assert.equal('table' in board.entries[0], false);
+});
+
+test('leaderboard reads require this session to finish and verify today’s result', async t => {
+  const f = fixture(t);
+  assert.equal((await f.call('leaderboard')).code, 401);
+  assert.equal((await f.call('leaderboard', undefined, 'unknown-session')).code, 401);
+  const {token} = await f.call('session', {});
+  const locked = async () => {
+    const result = await f.call('leaderboard', undefined, token);
+    assert.equal(result.code, 403);
+    assert.match(result.error, /Finish today’s M2ordle.*table-verified result/);
+    assert.equal('entries' in result, false);
+  };
+  await locked();
+  await f.publish();
+  await f.call('game', undefined, token);
+  await locked();
+  await f.guess(token);
+  await locked();
+  const identity = roster[10], claim = {personId: identity.id, table: identity.table};
+  assert.equal((await f.call('claim', {...claim, table: 999}, token)).code, 401);
+  await locked();
+  assert.equal((await f.call('claim', claim, token)).code, 200);
+  const board = await f.call('leaderboard', undefined, token);
+  assert.equal(board.code, 200);
+  assert.equal(board.date, TODAY);
+  assert.equal(board.nextReset, '2026-10-30T05:00:00.000Z');
+  assert.equal(board.entries[0].name, identity.name);
+  const other = await f.start();
+  assert.equal((await f.call('leaderboard', undefined, other.token)).code, 403);
+});
+
+test('leaderboard access resets at Central midnight and a verified loss unlocks cumulative scores', async t => {
+  const f = fixture(t); await f.publish(); await f.publish('2026-10-30');
+  const {token} = await f.start();
+  await f.guess(token);
+  const identity = roster[10], claim = {personId: identity.id, table: identity.table};
+  assert.equal((await f.call('claim', claim, token)).code, 200);
+  f.setTime('2026-10-30T04:59:59Z');
+  assert.equal((await f.call('leaderboard', undefined, token)).code, 200);
+  f.setTime('2026-10-30T05:00:00Z');
+  assert.equal((await f.call('leaderboard', undefined, token)).code, 403);
+  assert.equal((await f.call('leaderboard?date=' + TODAY, undefined, token)).code, 403);
+  await f.call('game', undefined, token);
+  for (let i = 1; i <= 5; i++) await f.guess(token, roster[i].id);
+  assert.equal((await f.call('leaderboard', undefined, token)).code, 403);
+  const result = await f.call('claim', claim, token);
+  assert.equal(result.code, 200);
+  assert.equal(result.status, 'lost');
+  const board = await f.call('leaderboard', undefined, token);
+  assert.equal(board.code, 200);
+  assert.equal(board.date, '2026-10-30');
+  assert.equal(board.nextReset, '2026-10-31T05:00:00.000Z');
+  assert.deepEqual(board.entries.map(({points, wins, played}) => ({points, wins, played})), [{points: 5, wins: 1, played: 2}]);
 });
 
 test('table guessing limits survive restarts and apply across sessions on the same IP', async t => {
