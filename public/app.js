@@ -1,4 +1,4 @@
-import {MAX_GUESSES, namePicker, shareText, countdown} from './shared.js';
+import {MAX_GUESSES, namePicker, shareText, countdown} from './shared.js?v=7';
 
 const app = document.querySelector('#app');
 const apiBase = (window.M2ORDLE_CONFIG?.apiBase || '').replace(/\/$/, '');
@@ -47,8 +47,9 @@ function releaseImage(){
   imageController?.abort();imageController=null;
   if(imageUrl){URL.revokeObjectURL(imageUrl);imageUrl=null;}
 }
+function releaseGuessPicker(){guessPicker?.destroy();guessPicker=null;}
 function home() {
-  navigation++;generation++;screen='home';guessPicker=null;imageLoading=false;setBusy(false);closeModal();releaseImage();
+  navigation++;generation++;screen='home';releaseGuessPicker();imageLoading=false;setBusy(false);closeModal();releaseImage();
   app.innerHTML=`<section class="title-screen"><h1><img class="wordmark" src="./assets/m2ordle.svg?v=4" alt="M2ordle" width="700" height="180"></h1><p class="tagline">Guess the classmate</p><button class="play-button"><span class="play-icon" aria-hidden="true"></span>PLAY</button><nav class="home-nav" aria-label="Game information"><button class="text-button" data-action="help">${icon('help')}How to play</button><button class="text-button" data-action="stats">${icon('stats')}Stats</button><button class="text-button" data-action="leaders">${icon('trophy')}Leaderboard</button></nav></section>`;
   app.querySelector('.play-button').onclick=start;
   app.querySelector('[data-action=help]').onclick=help;
@@ -56,7 +57,7 @@ function home() {
   app.querySelector('[data-action=leaders]').onclick=leaderboard;
 }
 function loading() {
-  generation++;guessPicker=null;imageLoading=false;releaseImage();
+  generation++;releaseGuessPicker();imageLoading=false;releaseImage();
   app.innerHTML='<section class="empty-screen" aria-live="polite"><div class="loader" aria-hidden="true"><i></i><i></i><i></i></div><p>Finding today’s M2ordle…</p></section>';
 }
 async function start() {
@@ -73,13 +74,13 @@ async function start() {
   finally{if(currentNavigation===navigation)setBusy(false);}
 }
 function errorScreen(message) {
-  generation++;guessPicker=null;imageLoading=false;releaseImage();
+  generation++;releaseGuessPicker();imageLoading=false;releaseImage();
   app.innerHTML='<section class="empty-screen"><h1>One moment…</h1><p></p><button class="pixel-button primary" data-retry>TRY AGAIN</button><button class="text-button" data-home>Back to home</button></section>';
   app.querySelector('p').textContent=message;app.querySelector('[data-retry]').onclick=start;app.querySelector('[data-home]').onclick=home;
 }
 async function renderGame() {
   const thisGeneration=++generation;
-  releaseImage();guessPicker=null;imageLoading=false;
+  releaseImage();releaseGuessPicker();imageLoading=false;
   if(!game.available){
     app.innerHTML='<section class="empty-screen"><img class="wordmark" src="./assets/m2ordle.svg?v=4" alt="M2ordle"><div class="empty-icon" aria-hidden="true">＋</div><h1>Today’s frame is on its way.</h1><p>Check again, or contact Devin to update today’s M2ordle.</p><button class="pixel-button primary" data-retry>CHECK AGAIN</button><button class="text-button" data-home>Back to home</button></section>';
     app.querySelector('[data-retry]').onclick=start;app.querySelector('[data-home]').onclick=home;return;
