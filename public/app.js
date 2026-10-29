@@ -213,7 +213,7 @@ function verifyIdentity(person){
       const updated=await api('/api/claim',{body:{personId:person.id,table:body.querySelector('input').value,date:claimDate}});
       if(currentNavigation!==navigation||game?.date!==claimDate)return;
       game=updated;if(!body.isConnected)return;
-      toast('Your result is on the leaderboard!');await results();
+      toast('Your result is on the leaderboard!');await leaderboard();
     }catch(error){if(body.isConnected&&currentNavigation===navigation){body.querySelector('.feedback').textContent=error.message;button.disabled=false;button.textContent='CONFIRM & ADD RESULT';}}
   };body.querySelector('input').focus();
 }
