@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 export const PUBLIC_FILES = [
   'index.html', 'app.js', 'styles.css', 'config.js', 'shared.js',
-  'admin.html', 'admin.js', 'admin.css', 'favicon.svg', 'robots.txt', 'manifest.webmanifest',
+  'admin.html', 'admin.js', 'admin.css', 'admin-preview.js', 'admin-preview.css', 'favicon.svg', 'robots.txt', 'manifest.webmanifest',
 ];
 const REQUIRED_FILES = ['index.html', 'app.js', 'styles.css', 'admin.html', 'admin.js', 'admin.css'];
 

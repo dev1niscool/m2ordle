@@ -1,3 +1,5 @@
+import { openPuzzlePreview, closePuzzlePreview } from './admin-preview.js';
+
 const $ = id => document.getElementById(id);
 const apiBase = String(window.M2ORDLE_CONFIG?.apiBase || '').replace(/\/$/, '');
 const PAGE_SIZE = 12;
@@ -8,7 +10,9 @@ const state = {
   today: centralDate(), day: centralDate(), month: centralDate().slice(0, 7), days: new Map(),
   galleryPage: 0, galleryQuery: '', galleryEpoch: 0, group: null, photo: null, source: null,
   person: null, stage: 0, crops: [], dirty: false, published: false, busy: false, loading: false, photoLoading: false,
-  dayEpoch: 0, photoEpoch: 0, options: [], optionIndex: -1, idleTimer: null
+  dayEpoch: 0, photoEpoch: 0, options: [], optionIndex: -1, idleTimer: null,
+  calendarEpoch: 0, calendarLoading: false, calendarLoaded: false,
+  overviewEpoch: 0, overviewLoading: false, overview: null, hasSaved: false, locked: false, copyDateEdited: false
 };
 
 function centralDate() {
@@ -54,11 +58,14 @@ function touchSession() {
   state.idleTimer = setTimeout(() => lock('Locked after 15 minutes of inactivity.'), IDLE_MS);
 }
 function lock(message = '') {
+  closePuzzlePreview();
   state.password = '';
   state.epoch++;
   state.dayEpoch++;
   state.photoEpoch++;
   state.galleryEpoch++;
+  state.calendarEpoch++;
+  state.overviewEpoch++;
   clearTimeout(state.idleTimer);
   for (const item of state.imageCache.values()) if (item.url) URL.revokeObjectURL(item.url);
   state.imageCache.clear();
@@ -66,19 +73,46 @@ function lock(message = '') {
   state.photo = null;
   state.group = null;
   state.person = null;
+  state.crops = [];
+  state.people = [];
+  state.groups = [];
+  state.photos.clear();
+  state.days.clear();
+  state.overview = null;
+  state.overviewLoading = false;
+  state.calendarLoading = false;
+  state.calendarLoaded = false;
+  state.hasSaved = false;
+  state.locked = false;
   state.dirty = false;
   state.loading = false;
   state.photoLoading = false;
   state.busy = false;
+  drag = null;
   document.querySelector('.admin-editor').inert = false;
   document.querySelector('.admin-sidebar').inert = false;
   $('admin-password').value = '';
   $('workspace').hidden = true;
+  $('workspace').dataset.busy = 'false';
   $('lock-button').hidden = true;
   $('login-screen').hidden = false;
   $('portrait-gallery').replaceChildren();
   $('pose-gallery').replaceChildren();
   $('chosen-portrait-thumb').removeAttribute('src');
+  $('answer-name').value = '';
+  $('answer-options').replaceChildren();
+  $('calendar-days').replaceChildren();
+  $('upcoming-days').replaceChildren();
+  $('activity-metrics').replaceChildren();
+  $('activity-date').textContent = '';
+  $('activity-note').textContent = '';
+  $('schedule-alert').textContent = 'Loading the schedule…';
+  $('overview-today').textContent = '—';
+  $('overview-ready').textContent = '— / 14';
+  $('overview-missing').textContent = '—';
+  $('copy-date').value = '';
+  for (const id of ['overview-message','copy-message']) setMessage(id);
+  for (const canvas of document.querySelectorAll('#workspace canvas')) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
   $('unlock-button').disabled = false;
   $('unlock-button').textContent = 'UNLOCK →';
   setMessage('login-message', message, 'info');
@@ -159,17 +193,24 @@ window.addEventListener('beforeunload', event => {
 
 async function loadCalendar() {
   const month = state.month;
+  const epoch = ++state.calendarEpoch;
+  const session = state.epoch;
+  state.calendarLoading = true;
+  state.calendarLoaded = false;
+  $('export-month').disabled = true;
   $('calendar-month').value = month;
   state.days = new Map();
   renderCalendar();
   setMessage('calendar-message');
   try {
     const response = await api(`/api/admin/calendar?month=${encodeURIComponent(month)}`);
-    if (month !== state.month || !state.password) return;
+    if (epoch !== state.calendarEpoch || session !== state.epoch || month !== state.month || !state.password) return;
     state.days = new Map((response.days || []).map(day => [day.date, day]));
     if (response.today) state.today = response.today;
+    state.calendarLoaded = true;
     renderCalendar();
-  } catch (error) { if (month === state.month) setMessage('calendar-message', error.message); }
+  } catch (error) { if (epoch === state.calendarEpoch && session === state.epoch) setMessage('calendar-message', error.message); }
+  finally { if (epoch === state.calendarEpoch && session === state.epoch) { state.calendarLoading = false; updateSaveButtons(); } }
 }
 function renderCalendar() {
   const grid = $('calendar-days');
@@ -187,12 +228,14 @@ function renderCalendar() {
     if (date === state.today) { button.classList.add('today'); button.setAttribute('aria-current', 'date'); }
     if (date < state.today) button.classList.add('past');
     if (puzzle) button.classList.add(puzzle.published ? 'scheduled' : 'draft');
-    button.setAttribute('aria-label', `${prettyDate(date)}${date === state.today ? ', today' : ''}${puzzle ? `, ${puzzle.published ? 'published' : 'draft'}, ${puzzle.name || 'puzzle'}` : ', not set'}`);
+    if (puzzle?.locked) button.classList.add('locked');
+    button.setAttribute('aria-label', `${prettyDate(date)}${date === state.today ? ', today' : ''}${puzzle ? `, ${puzzle.published ? 'published' : 'draft'}, ${puzzle.name || 'puzzle'}${puzzle.locked ? ', played and locked' : ''}` : ', not set'}`);
     button.addEventListener('click', () => selectDay(date));
     grid.append(button);
   }
 }
 function moveMonth(amount) {
+  if (state.busy) return;
   const [year, month] = state.month.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1 + amount, 1));
   const next = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -203,24 +246,167 @@ function moveMonth(amount) {
 $('previous-month').addEventListener('click', () => moveMonth(-1));
 $('next-month').addEventListener('click', () => moveMonth(1));
 $('calendar-month').addEventListener('change', event => {
+  if (state.busy) return;
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) return;
   state.month = event.target.value;
   loadCalendar();
 });
-$('today-button').addEventListener('click', async () => {
-  state.month = state.today.slice(0, 7);
-  await loadCalendar();
-  selectDay(state.today);
+$('today-button').addEventListener('click', () => selectDay(state.today));
+
+function addDays(day, amount) {
+  return new Date(Date.parse(day + 'T12:00:00Z') + amount * 86400000).toISOString().slice(0, 10);
+}
+function suggestedCopyDate(source) {
+  const start = source < state.today ? state.today : addDays(source, 1);
+  for (let offset = 0; offset < 32; offset++) {
+    const day = addDays(start, offset);
+    if (!state.days.has(day) && !state.overview?.upcoming.some(item => item.date === day && item.name !== null)) return day;
+  }
+  return start;
+}
+function shortDate(day) {
+  return new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', month: 'short', day: 'numeric'}).format(new Date(day + 'T12:00:00Z'));
+}
+async function loadOverview(day = state.day) {
+  const epoch = ++state.overviewEpoch;
+  const session = state.epoch;
+  state.overviewLoading = true;
+  $('activity-date').textContent = prettyDate(day);
+  $('activity-metrics').replaceChildren();
+  $('activity-note').textContent = 'Loading activity…';
+  setMessage('overview-message');
+  updateSaveButtons();
+  try {
+    const overview = await api(`/api/admin/overview?date=${encodeURIComponent(day)}`);
+    if (epoch !== state.overviewEpoch || session !== state.epoch || day !== state.day || !state.password) return;
+    state.overview = overview;
+    state.today = overview.today;
+    $('copy-date').min = state.today;
+    if (!state.copyDateEdited) $('copy-date').value = suggestedCopyDate(state.day);
+    renderOverview();
+  } catch (error) {
+    if (epoch !== state.overviewEpoch || session !== state.epoch || day !== state.day) return;
+    state.overview = null;
+    $('overview-today').textContent = '—';
+    $('overview-ready').textContent = '— / 14';
+    $('overview-missing').textContent = '—';
+    $('upcoming-days').replaceChildren();
+    $('schedule-alert').textContent = 'The latest schedule could not be loaded.';
+    $('activity-note').textContent = 'Activity is temporarily unavailable. Try Refresh.';
+    setMessage('overview-message', error.message);
+  } finally {
+    if (epoch === state.overviewEpoch && session === state.epoch) { state.overviewLoading = false; updateSaveButtons(); }
+  }
+}
+function renderOverview() {
+  const {upcoming, activity} = state.overview;
+  const ready = upcoming.filter(day => day.published).length;
+  const today = upcoming.find(day => day.date === state.today);
+  const gap = upcoming.find(day => !day.published);
+  $('overview-today').textContent = today?.published ? 'Live' : today?.name ? 'Draft only' : 'Not set';
+  $('overview-today').dataset.ready = String(Boolean(today?.published));
+  $('overview-ready').textContent = `${ready} / ${upcoming.length}`;
+  $('overview-missing').textContent = upcoming.length - ready;
+  $('schedule-alert').textContent = !today?.published ? 'Today needs a published puzzle. Players are seeing the check-back message.' : gap ? `${shortDate(gap.date)} is the next day that needs a published puzzle.` : 'You’re ready for the next two weeks.';
+  $('schedule-alert').dataset.ready = String(!gap);
+  const list = $('upcoming-days');
+  list.replaceChildren();
+  for (const day of upcoming) {
+    const button = node('button', 'upcoming-day');
+    button.type = 'button';
+    button.dataset.state = day.published ? 'published' : day.name ? 'draft' : 'empty';
+    button.setAttribute('aria-label', `${prettyDate(day.date)}, ${day.published ? 'published' : day.name ? 'draft' : 'not set'}${day.name ? ', ' + day.name : ''}${day.locked ? ', played and locked' : ''}`);
+    button.append(node('strong', '', day.date === state.today ? 'Today' : shortDate(day.date)), node('span', 'upcoming-name', day.name || 'Choose a classmate'), node('span', 'upcoming-status', day.locked ? 'PLAYED · LOCKED' : day.published ? 'READY' : day.name ? 'DRAFT' : 'NOT SET'));
+    button.addEventListener('click', async () => { await selectDay(day.date); if (state.day === day.date) $('selected-date-title').scrollIntoView({block: 'start', behavior: 'smooth'}); });
+    list.append(button);
+  }
+  const metrics = $('activity-metrics');
+  metrics.replaceChildren();
+  for (const [value, label] of [[activity.started, 'Started'],[activity.completed, 'Completed'],[`${activity.winRate}%`, 'Win rate'],[activity.averageGuesses === null ? '—' : Number(activity.averageGuesses).toFixed(1), 'Avg. winning guesses'],[activity.claimed, 'Added to leaderboard'],[activity.failed, 'Unsolved']]) {
+    const metric = node('div');metric.append(node('strong', '', value), node('span', '', label));metrics.append(metric);
+  }
+  $('activity-note').textContent = 'Activity counts browser games. Win rate uses completed games; average guesses uses wins.';
+}
+$('refresh-dashboard').addEventListener('click', async () => {
+  if (state.busy || state.loading || state.overviewLoading) return;
+  const day = state.day, epoch = state.dayEpoch, session = state.epoch;
+  await Promise.all([loadCalendar(), loadOverview(day)]);
+  if (epoch !== state.dayEpoch || session !== state.epoch || !state.password) return;
+  try {
+    const {puzzle} = await api(`/api/admin/puzzle?date=${encodeURIComponent(day)}`);
+    if (epoch !== state.dayEpoch || session !== state.epoch) return;
+    if (puzzle?.locked) { state.locked = true; updateStatus(); updateSaveButtons(); }
+  } catch (error) { if (epoch === state.dayEpoch && session === state.epoch) setMessage('overview-message', error.message); }
+});
+$('next-gap').addEventListener('click', async () => {
+  const gap = state.overview?.upcoming.find(day => !day.published);
+  if (gap) { await selectDay(gap.date); if (state.day === gap.date) $('selected-date-title').scrollIntoView({block: 'start', behavior: 'smooth'}); }
+});
+$('preview-puzzle').addEventListener('click', () => {
+  if ($('preview-puzzle').disabled) return;
+  openPuzzlePreview({source: state.source, crops: state.crops, name: state.person?.name || 'Classmate', date: state.day});
+});
+$('copy-date').addEventListener('input', () => { state.copyDateEdited = true; setMessage('copy-message'); updateSaveButtons(); });
+$('copy-puzzle-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if ($('copy-puzzle').disabled) return;
+  const sourceDate = state.day, targetDate = $('copy-date').value;
+  const session = state.epoch, epoch = state.dayEpoch;
+  state.busy = true;
+  document.querySelector('.admin-editor').inert = true;
+  document.querySelector('.admin-sidebar').inert = true;
+  updateSaveButtons();
+  setMessage('copy-message', 'Copying the saved puzzle…', 'info');
+  try {
+    await api('/api/admin/copy', {method: 'POST', body: JSON.stringify({sourceDate, targetDate})});
+    if (session !== state.epoch || epoch !== state.dayEpoch || !state.password) return;
+    state.month = targetDate.slice(0, 7);
+    await loadCalendar();
+    if (session !== state.epoch || epoch !== state.dayEpoch) return;
+    state.busy = false;
+    await selectDay(targetDate, true);
+    if (session !== state.epoch || state.day !== targetDate) return;
+    setMessage('editor-message', `Copied from ${prettyDate(sourceDate)}. This is a draft; review the clues and publish when ready.`, 'success');
+    $('selected-date-title').scrollIntoView({block: 'start', behavior: 'smooth'});
+  } catch (error) {
+    if (session === state.epoch && epoch === state.dayEpoch) setMessage('copy-message', error.message);
+  } finally {
+    if (session === state.epoch) {
+      state.busy = false;
+      document.querySelector('.admin-editor').inert = state.loading;
+      document.querySelector('.admin-sidebar').inert = false;
+      updateSaveButtons();
+    }
+  }
+});
+$('export-month').addEventListener('click', () => {
+  if (!state.calendarLoaded || state.calendarLoading || state.busy) return;
+  const [year, month] = state.month.split('-').map(Number);
+  const count = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const rows = [['Date (Central)', 'Status', 'Classmate', 'Portrait ID', 'Played / locked']];
+  for (let number = 1; number <= count; number++) {
+    const date = `${state.month}-${String(number).padStart(2, '0')}`;
+    const puzzle = state.days.get(date);
+    rows.push([date, puzzle ? puzzle.published ? 'Published' : 'Draft' : 'Not set', puzzle?.name || '', puzzle?.photoId || '', puzzle?.locked ? 'Yes' : 'No']);
+  }
+  const cell = value => { const text = String(value); return '"' + (/^[\s]*[=+@-]|^[\t\r\n]/.test(text) ? "'" + text : text).replaceAll('"', '""') + '"'; };
+  const csv = '\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
+  const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+  const link = node('a');link.href = url;link.download = `m2ordle-schedule-${state.month}.csv`;document.body.append(link);link.click();link.remove();setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setMessage('calendar-message', 'Month CSV prepared, including unpublished and empty days.', 'success');
 });
 
 async function selectDay(day, initial = false) {
   if (state.busy) return;
   if (!initial && state.dirty && !window.confirm('You have unsaved edits. Discard them and open this day?')) return;
+  closePuzzlePreview();
   const epoch = ++state.dayEpoch;
   ++state.photoEpoch;
   state.day = day;
   state.dirty = false;
   state.published = false;
+  state.hasSaved = false;
+  state.locked = false;
   state.loading = true;
   state.photoLoading = false;
   state.group = null;
@@ -229,6 +415,12 @@ async function selectDay(day, initial = false) {
   state.crops = [];
   state.person = null;
   state.stage = 0;
+  drag = null;
+  if (state.month !== day.slice(0, 7)) { state.month = day.slice(0, 7); void loadCalendar(); }
+  $('copy-date').min = state.today;
+  $('copy-date').value = suggestedCopyDate(day);
+  state.copyDateEdited = false;
+  setMessage('copy-message');
   $('selected-date-title').textContent = prettyDate(day);
   $('answer-name').value = '';
   closeOptions();
@@ -237,6 +429,7 @@ async function selectDay(day, initial = false) {
   renderCalendar();
   updateStatus();
   updateSaveButtons();
+  void loadOverview(day);
   document.querySelector('.admin-editor').dataset.loading = 'true';
   document.querySelector('.admin-editor').inert = true;
   setMessage('editor-message', 'Loading this day…', 'info');
@@ -245,6 +438,8 @@ async function selectDay(day, initial = false) {
     if (epoch !== state.dayEpoch || !state.password) return;
     if (puzzle) {
       state.published = Boolean(puzzle.published);
+      state.hasSaved = true;
+      state.locked = Boolean(puzzle.locked);
       state.person = state.people.find(person => person.id === puzzle.personId) || null;
       $('answer-name').value = state.person?.name || '';
       renderAnswerStatus();
@@ -279,22 +474,34 @@ function resetPhotoUI() {
 function updateStatus() {
   const status = $('puzzle-status');
   $('save-note').classList.remove('save-error');
-  const saved = state.days.get(state.day);
-  status.textContent = state.dirty ? 'UNSAVED' : state.published ? 'PUBLISHED' : saved ? 'DRAFT' : 'NOT SET';
-  status.dataset.state = state.dirty ? 'unsaved' : state.published ? 'published' : saved ? 'draft' : 'empty';
-  $('save-note').textContent = state.dirty ? 'You have unsaved changes.' : state.published ? 'This day is published.' : 'Ready when you are.';
+  status.textContent = state.locked ? 'PLAYED · LOCKED' : state.dirty ? 'UNSAVED' : state.published ? 'PUBLISHED' : state.hasSaved ? 'DRAFT' : 'NOT SET';
+  status.dataset.state = state.locked ? 'locked' : state.dirty ? 'unsaved' : state.published ? 'published' : state.hasSaved ? 'draft' : 'empty';
+  $('save-note').textContent = state.locked ? 'Played puzzles stay locked to keep scores fair.' : state.dirty ? 'You have unsaved changes.' : state.published ? 'This day is published.' : 'Ready when you are.';
+  $('locked-note').hidden = !state.locked;
   $('publish-puzzle').textContent = state.published ? 'UPDATE DAY ↗' : 'PUBLISH DAY ↗';
 }
 function markDirty() {
+  if (state.locked) return;
   state.dirty = true;
   updateStatus();
   updateSaveButtons();
 }
 function updateSaveButtons() {
-  const ready = Boolean(state.source && state.photo && state.person && state.crops.length === CROP_COUNT && !state.busy && !state.loading && !state.photoLoading);
+  const ready = Boolean(state.source && state.photo && state.person && state.crops.length === CROP_COUNT && !state.locked && !state.busy && !state.loading && !state.photoLoading);
   $('save-draft').disabled = !ready;
   $('publish-puzzle').disabled = !ready;
   $('save-draft').textContent = state.busy ? 'Saving…' : 'Save draft';
+  $('preview-puzzle').disabled = !state.source || state.crops.length !== CROP_COUNT || state.busy || state.loading || state.photoLoading;
+  $('preview-note').textContent = state.dirty ? 'Preview includes your unsaved edits.' : 'See all five clues and the full reveal.';
+  for (const panel of document.querySelectorAll('.setup-panel,.identity-panel,.crop-panel')) panel.inert = state.locked;
+  const target = $('copy-date').value;
+  const targetExists = state.days.has(target) || state.overview?.upcoming.some(day => day.date === target && day.name !== null);
+  $('copy-puzzle').disabled = !state.hasSaved || state.dirty || state.busy || state.loading || !target || target < state.today || target === state.day || targetExists;
+  $('copy-date').disabled = state.busy || state.loading;
+  $('copy-hint').textContent = !state.hasSaved ? 'Save this puzzle first, then reuse its portrait, answer, and crops as a new draft.' : state.dirty ? 'Save your edits before copying this puzzle.' : targetExists ? 'That date already has a puzzle. Choose an empty date.' : 'Copies the saved portrait, answer, and all crops into an empty date. The new puzzle stays a draft until you publish it.';
+  $('refresh-dashboard').disabled = state.overviewLoading || state.busy || state.loading;
+  $('next-gap').disabled = !state.overview?.upcoming.some(day => !day.published) || state.busy || state.loading;
+  $('export-month').disabled = !state.calendarLoaded || state.calendarLoading || state.busy;
 }
 
 function filteredGroups() {
@@ -349,6 +556,7 @@ $('change-portrait').addEventListener('click', () => {
   if (!$('gallery-section').hidden) renderGallery();
 });
 async function choosePhoto(group, photo, options = {}) {
+  if (state.locked && !options.saved) return;
   const epoch = ++state.photoEpoch;
   const dayEpoch = state.dayEpoch;
   state.photoLoading = true;
@@ -442,6 +650,7 @@ function closeOptions() {
   state.optionIndex = -1;
 }
 function selectAnswer(person) {
+  if (state.locked) return;
   state.person = person;
   $('answer-name').value = person.name;
   closeOptions();
@@ -568,7 +777,7 @@ function renderCrop() {
   $('next-stage').disabled = state.stage === CROP_COUNT - 1;
 }
 function setCropSize(value) {
-  if (!state.source) return;
+  if (!state.source || state.locked) return;
   const current = state.crops[state.stage];
   const ratio = state.source.naturalWidth / state.source.naturalHeight;
   const min = state.stage === 0 ? 0.04 : state.crops[state.stage - 1].size + 0.015;
@@ -592,7 +801,7 @@ function sourcePoint(event) {
   return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
 }
 $('source-canvas').addEventListener('pointerdown', event => {
-  if (!state.source || state.loading || state.busy || event.button > 0) return;
+  if (!state.source || state.locked || state.loading || state.busy || event.button > 0) return;
   event.preventDefault();
   const point = sourcePoint(event);
   const crop = state.crops[state.stage];
@@ -603,7 +812,7 @@ $('source-canvas').addEventListener('pointerdown', event => {
   moveCrop(event);
 });
 function moveCrop(event) {
-  if (!drag || event.pointerId !== drag.pointerId || !state.source) return;
+  if (!drag || event.pointerId !== drag.pointerId || !state.source || state.locked) return;
   const point = sourcePoint(event);
   state.crops[state.stage] = clampCrop({ ...state.crops[state.stage], x: point.x - drag.x, y: point.y - drag.y });
   renderCrop();
@@ -612,7 +821,7 @@ function moveCrop(event) {
 $('source-canvas').addEventListener('pointermove', moveCrop);
 for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) $('source-canvas').addEventListener(name, () => { drag = null; });
 $('source-canvas').addEventListener('keydown', event => {
-  if (!state.source) return;
+  if (!state.source || state.locked) return;
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (moves[event.key]) {
     event.preventDefault();
@@ -628,7 +837,7 @@ $('source-canvas').addEventListener('keydown', event => {
 });
 
 async function savePuzzle(published) {
-  if (state.busy || state.loading || !state.source || !state.person || !state.photo) return;
+  if (state.busy || state.loading || state.photoLoading || state.locked || !state.source || !state.person || !state.photo) return;
   closeOptions();
   const date = state.day;
   const epoch = state.dayEpoch;
@@ -649,10 +858,12 @@ async function savePuzzle(published) {
     await api('/api/admin/puzzle', { method: 'POST', body: JSON.stringify(body) });
     if (epoch !== state.dayEpoch || !state.password) return;
     state.published = published;
+    state.hasSaved = true;
     state.dirty = false;
     state.days.set(date, { date, personId: body.personId, name: state.people.find(person => person.id === body.personId).name, photoId: body.photoId, published });
     updateStatus();
     renderCalendar();
+    void loadOverview(date);
     setMessage('editor-message', published ? (date === state.today ? 'Today’s M2ordle is live.' : `Published for ${prettyDate(date)}. Players will see it at midnight Central.`) : `Draft saved for ${prettyDate(date)}. Publish it when it’s ready.`, 'success');
   } catch (error) {
     if (epoch === state.dayEpoch) {

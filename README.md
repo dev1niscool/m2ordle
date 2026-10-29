@@ -14,6 +14,16 @@ Open `admin.html` and enter the owner password. Select a date in the calendar, s
 
 Save a draft or publish. Future days can be edited until somebody opens that day's live puzzle. A played puzzle is locked to keep scores consistent. If a day has no published puzzle, players see “Check again, or contact Devin to update today's M2ordle.” There is no event countdown on the home screen. Puzzle numbering starts at the earliest published day; calendar days after that continue numbering, including gaps.
 
+The control room also includes:
+
+- **Schedule overview:** the next 14 Central Time dates, their published/draft/missing status, and a shortcut to the next day that needs a published puzzle.
+- **Day activity:** started games, completions, win rate, average guesses among wins, and verified leaderboard entries for the selected date. Started games count browser sessions, not verified individual people.
+- **Player preview:** step through the five current crops and the full reveal before saving. It includes unsaved crop edits and never creates a game or score.
+- **Copy to another day:** duplicate a saved puzzle and all six images to an empty current/future date as a draft. This works for locked source puzzles too; it cannot overwrite an existing destination or change the source puzzle.
+- **Month export:** download the displayed calendar month as a CSV, including empty dates. It contains schedule details, not table assignments, credentials, or portrait images.
+
+Played days are visibly locked in the editor; preview and copying remain available. Existing saved puzzles and player results are preserved.
+
 The PDF supplies 181 accepted names and table assignments. The reviewed library has 183 photo groups containing 633 alternate images, all preserved. There is no assumption that its groups map one-to-one to PDF rows.
 
 ## Local development

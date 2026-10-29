@@ -1,0 +1,18 @@
+.admin-preview-dialog{width:min(460px,calc(100% - 28px));padding:24px;max-height:calc(100svh - 28px);border:2px solid var(--edge);background:#161024;color:var(--cream)}
+.preview-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.preview-heading .admin-eyebrow{margin-bottom:5px;font-size:12px}
+.preview-heading h2{font-size:25px;margin:0;line-height:1.25}
+.preview-heading .admin-icon-button{flex-shrink:0;font-size:26px}
+.preview-note{font-size:14px;line-height:1.6;color:var(--violet);margin:16px 0}
+.preview-frame{width:min(100%,320px);margin:auto;padding:5px;border:2px solid var(--edge);background:var(--deep)}
+.preview-frame canvas{display:block;width:100%;height:auto;aspect-ratio:1}
+.preview-caption{text-align:center;margin:16px 0 12px;min-height:62px}
+.preview-caption strong{display:block;color:var(--lime);font-size:21px}
+.preview-caption p{font-size:13px;line-height:1.5;color:var(--violet);margin:4px 0 0}
+.preview-steps{display:grid;grid-template-columns:repeat(5,1fr) 1.6fr;gap:6px;margin:12px 0 20px}
+.preview-steps button{min-height:40px;padding:5px;border:1px solid var(--edge);background:#211733;color:var(--cream);font-size:14px}
+.preview-steps button[aria-pressed=true]{color:var(--ink);border-color:var(--lime);background:var(--lime)}
+.preview-navigation{display:grid;grid-template-columns:1fr 1.3fr;gap:12px}
+.preview-navigation .admin-button{font-size:15px;padding:11px 8px;min-height:46px}
+.preview-reveal{display:block;margin:12px auto 0;min-height:40px;font-size:14px}
+@media(max-width:420px){.admin-preview-dialog{padding:18px}.preview-frame{max-width:280px}.preview-navigation{gap:9px}.preview-navigation .admin-button{font-size:14px}.preview-caption strong{font-size:20px}}

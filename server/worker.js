@@ -231,6 +231,58 @@ export class M2ordle {
       return {saved: true, puzzle: {date: body.date, personId: body.personId, photoId: body.photoId, crops, published: body.published}};
     });
   }
+  adminOverview(date) {
+    if (!validDate(date)) fail('Choose a valid date.');
+    const now = this.now(), today = centralDate(now);
+    const dates = Array.from({length: 14}, (_, index) => new Date(Date.parse(today + 'T00:00:00Z') + index * 86400000).toISOString().slice(0, 10));
+    const scheduled = new Map(this.all('SELECT date,person_id,published,EXISTS(SELECT 1 FROM games WHERE games.date=puzzles.date) AS locked FROM puzzles WHERE date>=? AND date<=? ORDER BY date', today, dates.at(-1)).map(row => [row.date, row]));
+    const upcoming = dates.map(day => {
+      const row = scheduled.get(day);
+      return {date: day, published: Boolean(row?.published), name: row ? this.people.get(row.person_id)?.name || 'Classmate' : null, locked: Boolean(row?.locked)};
+    });
+    const activity = {date, started: 0, completed: 0, wins: 0, failed: 0, winRate: 0, averageGuesses: null, claimed: this.one('SELECT COUNT(*) AS count FROM claims WHERE date=?', date).count, distribution: Array(MAX_GUESSES).fill(0)};
+    let winningGuesses = 0;
+    for (const row of this.all('SELECT status,guesses FROM games WHERE date=?', date)) {
+      activity.started++;
+      if (row.status === 'won') {
+        const count = JSON.parse(row.guesses).length;
+        activity.wins++;
+        activity.completed++;
+        winningGuesses += count;
+        activity.distribution[count - 1]++;
+      } else if (row.status === 'lost') {
+        activity.failed++;
+        activity.completed++;
+      }
+    }
+    activity.winRate = activity.completed ? Math.round(activity.wins / activity.completed * 100) : 0;
+    activity.averageGuesses = activity.wins ? winningGuesses / activity.wins : null;
+    return {today, nextReset: nextCentralMidnight(now), upcoming, activity};
+  }
+  copyPuzzle(body) {
+    if (!validDate(body.sourceDate) || !validDate(body.targetDate)) fail('Choose valid source and destination dates.');
+    if (body.sourceDate === body.targetDate) fail('Choose a different destination date.');
+    const now = this.now();
+    if (body.targetDate < centralDate(now)) fail('Copy to today or a future date.');
+    return this.atomic(() => {
+      const source = this.one('SELECT * FROM puzzles WHERE date=?', body.sourceDate);
+      if (!source) fail('Save the source puzzle before copying it.', 404);
+      if (this.one('SELECT 1 AS found FROM puzzles WHERE date=?', body.targetDate) || this.one('SELECT 1 AS found FROM games WHERE date=? LIMIT 1', body.targetDate)) fail('That day already has a puzzle or player activity. Choose an empty day.', 409);
+      const photo = this.photos.get(source.photo_id);
+      if (!photo || !this.people.has(source.person_id)) fail('The source portrait or classmate is unavailable.', 409);
+      const images = this.all('SELECT stage,jpeg FROM images WHERE date=?', body.sourceDate);
+      const stages = new Set([...Array.from({length: MAX_GUESSES}, (_, index) => String(index)), 'reveal']);
+      let crops;
+      try {
+        crops = validateCrops(JSON.parse(source.crops), photo);
+        if (images.length !== stages.size || images.some(image => !stages.has(image.stage))) throw new Error('Missing source images.');
+        for (const image of images) validateJpeg('data:image/jpeg;base64,' + image.jpeg);
+      } catch { fail('The saved puzzle is incomplete. Save all five crops and the reveal before copying.', 409); }
+      this.sql.exec('INSERT INTO puzzles(date,person_id,photo_id,crops,published,updated) VALUES (?,?,?,?,0,?)', body.targetDate, source.person_id, source.photo_id, JSON.stringify(crops), now);
+      for (const image of images) this.sql.exec('INSERT INTO images(date,stage,jpeg) VALUES (?,?,?)', body.targetDate, image.stage, image.jpeg);
+      return {saved: true, puzzle: {date: body.targetDate, personId: source.person_id, photoId: source.photo_id, crops, published: false, locked: false}};
+    });
+  }
   image(token, url) {
     const date = url.searchParams.get('date'), stage = url.searchParams.get('stage');
     if (!validDate(date)) fail('Invalid puzzle date.');
@@ -251,10 +303,11 @@ export class M2ordle {
         await this.admin(request);
         if (method === 'GET' && path === '/api/admin/auth') return json({ok: true});
         if (method === 'GET' && path === '/api/admin/photos') return json({groups: photos});
+        if (method === 'GET' && path === '/api/admin/overview') return json(this.adminOverview(url.searchParams.get('date')));
         if (method === 'GET' && path === '/api/admin/calendar') {
           const month = url.searchParams.get('month');
           if (!/^\d{4}-\d{2}$/.test(month || '') || !validDate(month + '-01')) fail('Choose a valid month.');
-          return json({days: this.all('SELECT date,person_id,photo_id,published FROM puzzles WHERE date LIKE ? ORDER BY date', month + '-%').map(row => ({date: row.date, personId: row.person_id, name: this.people.get(row.person_id).name, photoId: row.photo_id, published: Boolean(row.published)})), today: centralDate(this.now())});
+          return json({days: this.all('SELECT date,person_id,photo_id,published,EXISTS(SELECT 1 FROM games WHERE games.date=puzzles.date) AS locked FROM puzzles WHERE date LIKE ? ORDER BY date', month + '-%').map(row => ({date: row.date, personId: row.person_id, name: this.people.get(row.person_id).name, photoId: row.photo_id, published: Boolean(row.published), locked: Boolean(row.locked)})), today: centralDate(this.now())});
         }
         if (method === 'GET' && path === '/api/admin/puzzle') {
           const date = url.searchParams.get('date');
@@ -263,6 +316,7 @@ export class M2ordle {
           return json({puzzle: row ? {date: row.date, personId: row.person_id, photoId: row.photo_id, crops: JSON.parse(row.crops), published: Boolean(row.published), locked: Boolean(this.one('SELECT 1 AS found FROM games WHERE date=? LIMIT 1', date))} : null});
         }
         if (method === 'POST' && path === '/api/admin/puzzle') return json(this.savePuzzle(await this.body(request)));
+        if (method === 'POST' && path === '/api/admin/copy') return json(this.copyPuzzle(await this.body(request)));
         return json({error: 'Not found.'}, 404);
       }
       if (method === 'GET' && path === '/api/health') return json({ok: true});

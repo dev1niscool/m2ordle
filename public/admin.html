@@ -9,8 +9,9 @@
   <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32-v3.png">
   <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon-v3.png">
   <link rel="preload" href="./assets/pixelify-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./styles.css?v=4">
-  <link rel="stylesheet" href="./admin.css?v=4">
+  <link rel="stylesheet" href="./styles.css?v=5">
+  <link rel="stylesheet" href="./admin.css?v=6">
+  <link rel="stylesheet" href="./admin-preview.css?v=6">
 </head>
 <body class="admin-page">
   <div class="arcade-world" aria-hidden="true"><div class="stars"></div><div class="orb"></div><div class="mountains"></div><div class="grid-floor"></div></div>
@@ -32,6 +33,13 @@
       </form>
     </section>
     <section id="workspace" class="admin-workspace" hidden>
+      <section class="admin-panel admin-overview" aria-labelledby="overview-heading">
+        <div class="overview-heading"><div><p class="admin-eyebrow">KEEP THE CLASS GUESSING</p><h2 id="overview-heading">Your next two weeks</h2></div><button id="refresh-dashboard" class="admin-button admin-button-small">Refresh</button></div>
+        <div class="overview-metrics" id="overview-metrics"><div><span>Today</span><strong id="overview-today">—</strong></div><div><span>Days ready</span><strong id="overview-ready">— / 14</strong></div><div><span>Need attention</span><strong id="overview-missing">—</strong></div></div>
+        <div class="schedule-attention"><p id="schedule-alert" role="status">Loading the schedule…</p><button id="next-gap" class="admin-button admin-button-small" disabled>Open next gap →</button></div>
+        <details class="upcoming-details"><summary>View the next 14 days</summary><div id="upcoming-days" class="upcoming-days"></div></details>
+        <p id="overview-message" class="admin-message" role="status"></p><p class="overview-footnote admin-muted">Published days open at midnight Central. Refresh to get the latest schedule and activity.</p>
+      </section>
       <aside class="admin-sidebar">
         <section class="admin-panel calendar-panel" aria-label="Puzzle calendar">
           <div class="calendar-title"><p class="admin-eyebrow">THE DAILY LINEUP</p><button class="admin-link-button" id="today-button">Today</button></div>
@@ -43,6 +51,7 @@
           <div class="calendar-weekdays" aria-hidden="true"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
           <div id="calendar-days" class="calendar-days"></div>
           <div class="calendar-legend"><span><i class="scheduled-dot"></i>Scheduled</span><span><i class="draft-dot"></i>Draft</span></div>
+          <button id="export-month" class="admin-button admin-button-small export-month" disabled>Export month CSV ↓</button>
           <p id="calendar-message" class="admin-message" role="status"></p>
         </section>
         <div class="admin-sidebar-note"><span aria-hidden="true">✦</span><p>Every new puzzle starts at <strong>midnight Central.</strong> Nothing scheduled? Players see a message to check back or contact Devin.</p></div>
@@ -51,6 +60,9 @@
       <section class="admin-editor" aria-label="Daily puzzle editor">
         <div class="editor-heading"><div><p class="admin-eyebrow">BUILD A DAILY CHALLENGE</p><h1 id="selected-date-title"></h1></div><span id="puzzle-status" class="admin-status">NOT SET</span></div>
         <p id="editor-message" class="admin-message editor-message" role="status" aria-live="polite"></p>
+        <p id="locked-note" class="locked-note" hidden>This puzzle has been opened by a player and is locked. You can preview it or copy it to a new day.</p>
+        <div class="editor-tools"><button id="preview-puzzle" class="admin-button" disabled>▷ Preview puzzle</button><span id="preview-note" class="admin-muted">See all five clues and the full reveal.</span></div>
+        <section class="admin-panel activity-panel" aria-labelledby="activity-heading"><div class="activity-heading"><h2 id="activity-heading">This day’s activity</h2><span class="admin-muted" id="activity-date"></span></div><div id="activity-metrics" class="activity-metrics"></div><p class="admin-muted activity-note" id="activity-note">Select a day to see its results.</p></section>
         <section class="admin-panel setup-panel">
           <div class="admin-section-title"><span class="step-number">01</span><div><h2>Pick a portrait</h2><p>Existing class groups, with every paired pose.</p></div><button id="change-portrait" class="admin-button admin-button-small" hidden>Change</button></div>
           <div id="chosen-portrait-summary" class="chosen-portrait-summary" hidden><img id="chosen-portrait-thumb" alt="Selected portrait"><div><strong id="chosen-portrait-label"></strong><p class="admin-muted" id="chosen-portrait-detail"></p></div></div>
@@ -84,11 +96,12 @@
             <details class="reveal-details"><summary>Full-photo reveal</summary><canvas id="reveal-canvas" width="640" height="640" aria-label="Full portrait revealed after completion"></canvas><p class="admin-muted">Shown after a correct answer or the fifth wrong guess. It uses the same square frame.</p></details>
           </div>
         </section>
+        <details class="admin-panel copy-panel"><summary>Copy this puzzle to another day</summary><p class="admin-muted" id="copy-hint">Save this puzzle first, then reuse its portrait, answer, and crops as a new draft.</p><form id="copy-puzzle-form"><div><label for="copy-date">New date</label><input type="date" id="copy-date" required></div><button id="copy-puzzle" class="admin-button" type="submit" disabled>COPY AS DRAFT →</button></form><p id="copy-message" class="admin-message" role="status"></p></details>
         <footer class="editor-actions"><div><strong id="save-note">Ready when you are.</strong><p class="admin-muted">Drafts stay private. Published puzzles go live on their date.</p></div><div class="save-buttons"><button id="save-draft" class="admin-button" disabled>Save draft</button><button id="publish-puzzle" class="admin-button admin-primary" disabled>PUBLISH DAY <span aria-hidden="true">↗</span></button></div></footer>
       </section>
     </section>
   </main>
   <script src="./config.js"></script>
-  <script type="module" src="./admin.js"></script>
+  <script type="module" src="./admin.js?v=6"></script>
 </body>
 </html>

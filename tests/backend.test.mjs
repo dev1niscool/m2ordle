@@ -91,6 +91,109 @@ test('admin validates dates, crop bounds, progression, portraits and JPEG payloa
   assert.equal((await f.call('admin/calendar?month=2026-99', undefined, ADMIN)).code, 400);
 });
 
+test('admin overview requires authentication and reports a Central-time schedule across month boundaries', async t => {
+  const f = fixture(t);
+  assert.equal((await f.call('admin/overview?date=' + TODAY)).code, 401);
+  for (const suffix of ['', '?date=2026-02-30', '?date=not-a-date']) assert.equal((await f.call('admin/overview' + suffix, undefined, ADMIN)).code, 400);
+  await f.publish();
+  await f.publish('2026-11-01', {published: false});
+  await f.publish('2026-11-02');
+  await f.start();
+  f.setTime('2026-10-30T04:59:59Z');
+  const overview = await f.call('admin/overview?date=' + TODAY, undefined, ADMIN);
+  assert.equal(overview.today, TODAY);
+  assert.equal(overview.nextReset, '2026-10-30T05:00:00.000Z');
+  assert.equal(overview.upcoming.length, 14);
+  assert.deepEqual(overview.upcoming[0], {date: TODAY, published: true, name: ANSWER.name, locked: true});
+  assert.deepEqual(overview.upcoming[1], {date: '2026-10-30', published: false, name: null, locked: false});
+  assert.deepEqual(overview.upcoming.find(day => day.date === '2026-11-01'), {date: '2026-11-01', published: false, name: ANSWER.name, locked: false});
+  assert.equal(overview.upcoming.at(-1).date, '2026-11-11');
+  assert.equal((await f.call('admin/calendar?month=2026-10', undefined, ADMIN)).days[0].locked, true);
+  f.setTime('2026-10-30T05:00:00Z');
+  assert.equal((await f.call('admin/overview?date=' + TODAY, undefined, ADMIN)).today, '2026-10-30');
+  f.setTime('2026-11-01T05:30:00Z');
+  assert.equal((await f.call('admin/overview?date=' + TODAY, undefined, ADMIN)).nextReset, '2026-11-02T06:00:00.000Z');
+});
+
+test('admin activity counts completed, in-progress and claimed games without exposing identities', async t => {
+  const f = fixture(t); await f.publish();
+  const first = await f.start(), third = await f.start(), lost = await f.start(), playing = await f.start();
+  await f.guess(first.token);
+  await f.guess(third.token, roster[1].id); await f.guess(third.token, roster[2].id); await f.guess(third.token);
+  for (let i = 1; i <= 5; i++) await f.guess(lost.token, roster[i].id);
+  await f.guess(playing.token, roster[1].id);
+  const identity = roster[10];
+  await f.call('claim', {personId: identity.id, table: identity.table}, first.token);
+  const {activity} = await f.call('admin/overview?date=' + TODAY, undefined, ADMIN);
+  assert.deepEqual(activity, {date: TODAY, started: 4, completed: 3, wins: 2, failed: 1, winRate: 67, averageGuesses: 2, claimed: 1, distribution: [1, 0, 1, 0, 0]});
+  for (const value of [first.token, third.token, lost.token, playing.token, identity.name]) assert.equal(JSON.stringify(activity).includes(value), false);
+  const empty = (await f.call('admin/overview?date=2026-10-28', undefined, ADMIN)).activity;
+  assert.deepEqual(empty, {date: '2026-10-28', started: 0, completed: 0, wins: 0, failed: 0, winRate: 0, averageGuesses: null, claimed: 0, distribution: [0, 0, 0, 0, 0]});
+});
+
+test('admin copies a played puzzle and every image into an empty draft without changing source results', async t => {
+  const f = fixture(t); await f.publish();
+  const player = await f.start(); await f.guess(player.token);
+  const identity = roster[10];
+  await f.call('claim', {personId: identity.id, table: identity.table}, player.token);
+  const source = f.db.prepare('SELECT * FROM puzzles WHERE date=?').get(TODAY);
+  const images = f.db.prepare('SELECT stage,jpeg FROM images WHERE date=? ORDER BY stage').all(TODAY);
+  const games = f.db.prepare('SELECT * FROM games').all(), claims = f.db.prepare('SELECT * FROM claims').all(), epoch = f.db.prepare('SELECT * FROM settings').all();
+  const copy = await f.call('admin/copy', {sourceDate: TODAY, targetDate: '2026-10-30', published: true}, ADMIN);
+  assert.equal(copy.code, 200);
+  assert.equal(copy.saved, true);
+  assert.deepEqual(copy.puzzle, {date: '2026-10-30', personId: ANSWER.id, photoId: PHOTO.id, crops: puzzle().crops, published: false, locked: false});
+  assert.deepEqual(f.db.prepare('SELECT stage,jpeg FROM images WHERE date=? ORDER BY stage').all('2026-10-30'), images);
+  assert.deepEqual(f.db.prepare('SELECT * FROM puzzles WHERE date=?').get(TODAY), source);
+  assert.deepEqual(f.db.prepare('SELECT * FROM games').all(), games);
+  assert.deepEqual(f.db.prepare('SELECT * FROM claims').all(), claims);
+  assert.deepEqual(f.db.prepare('SELECT * FROM settings').all(), epoch);
+  f.restart();
+  assert.equal((await f.call('admin/puzzle?date=2026-10-30', undefined, ADMIN)).puzzle.published, false);
+  f.setTime('2026-10-30T05:00:00Z');
+  assert.equal((await f.call('game', undefined, player.token)).available, false);
+});
+
+test('admin copy rejects unauthorized, invalid, occupied and incomplete requests without overwriting data', async t => {
+  const f = fixture(t); await f.publish();
+  const body = {sourceDate: TODAY, targetDate: '2026-10-30'};
+  assert.equal((await f.call('admin/copy', body)).code, 401);
+  for (const update of [{sourceDate: '2026-02-30'}, {targetDate: 'invalid'}, {targetDate: TODAY}, {targetDate: '2026-10-28'}]) assert.equal((await f.call('admin/copy', {...body, ...update}, ADMIN)).code, 400);
+  assert.equal((await f.call('admin/copy', {...body, sourceDate: '2026-10-28'}, ADMIN)).code, 404);
+  await f.publish('2026-10-30', {published: false, personId: roster[1].id});
+  const existing = f.db.prepare('SELECT * FROM puzzles WHERE date=?').get('2026-10-30');
+  assert.equal((await f.call('admin/copy', body, ADMIN)).code, 409);
+  assert.deepEqual(f.db.prepare('SELECT * FROM puzzles WHERE date=?').get('2026-10-30'), existing);
+  await f.publish('2026-10-31');
+  assert.equal((await f.call('admin/copy', {...body, targetDate: '2026-10-31'}, ADMIN)).code, 409);
+  f.db.prepare('INSERT INTO games(session,date,created) VALUES (?,?,?)').run('fixture-orphan', '2026-11-01', 0);
+  assert.equal((await f.call('admin/copy', {...body, targetDate: '2026-11-01'}, ADMIN)).code, 409);
+  f.db.prepare('DELETE FROM images WHERE date=? AND stage=?').run(TODAY, 'reveal');
+  assert.equal((await f.call('admin/copy', {...body, targetDate: '2026-11-02'}, ADMIN)).code, 409);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM puzzles WHERE date=?').get('2026-11-02').n, 0);
+  await f.publish();
+  f.db.prepare('UPDATE images SET jpeg=? WHERE date=? AND stage=?').run('broken', TODAY, '2');
+  assert.equal((await f.call('admin/copy', {...body, targetDate: '2026-11-02'}, ADMIN)).code, 409);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM images WHERE date=?').get('2026-11-02').n, 0);
+});
+
+test('admin copy is atomic, refuses competing copies and uses Central dates for past-day protection', async t => {
+  const f = fixture(t); await f.publish('2026-10-28');
+  const body = {sourceDate: '2026-10-28', targetDate: TODAY};
+  const exec = f.room.sql.exec;
+  f.room.sql.exec = (query, ...args) => {if (query.startsWith('INSERT INTO images') && args[0] === TODAY && args[1] === '2') throw new Error('fixture copy failure'); return exec(query, ...args);};
+  assert.equal((await f.call('admin/copy', body, ADMIN)).code, 500);
+  f.room.sql.exec = exec;
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM puzzles WHERE date=?').get(TODAY).n, 0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM images WHERE date=?').get(TODAY).n, 0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM images WHERE date=?').get('2026-10-28').n, 6);
+  f.setTime('2026-10-30T04:59:59Z');
+  const copies = await Promise.all([f.call('admin/copy', body, ADMIN), f.call('admin/copy', body, ADMIN)]);
+  assert.deepEqual(copies.map(result => result.code).sort(), [200, 409]);
+  f.setTime('2026-10-30T05:00:00Z');
+  assert.equal((await f.call('admin/copy', body, ADMIN)).code, 400);
+});
+
 test('guesses are server scored, retry safe, persistent and unlock only earned crops', async t => {
   const f = fixture(t);
   await f.publish();
