@@ -1,5 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="700" height="180" viewBox="0 0 700 180" role="img" aria-labelledby="title desc">
   <title id="title">M2ordle</title>
-  <desc id="desc">M2ordle in clear, solid lettering: lime M2 and white ordle.</desc>
-  <text x="350" y="133" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="138" font-weight="800" letter-spacing="-5"><tspan fill="#dbff59">M2</tspan><tspan fill="#faf8ff">ordle</tspan></text>
+  <desc id="desc">M2ordle in solid pixel lettering: lime M2 and white ordle.</desc>
+  <g transform="translate(14.8878 141.9702) scale(0.165774 -0.165774)">
+    <path fill="#dbff59" transform="translate(0 0)" d="M61 -11V552H149V638H276V552H365V381H414V552H503V638H631V552H718V-11H592V501H542V331H453V74H326V331H237V501H188V-11Z"/>
+    <path fill="#dbff59" transform="translate(779 0)" d="M149 -11V74H61V297H149V381H414V501H188V416H61V552H149V638H453V552H542V331H453V246H188V125H414V211H542V74H453V-11Z"/>
+    <path fill="#faf8ff" transform="translate(1382 0)" d="M149 -11V74H61V381H149V467H453V381H542V74H453V-11ZM188 125H414V331H188Z"/>
+    <path fill="#faf8ff" transform="translate(1985 0)" d="M61 -11V381H149V467H453V381H542V246H414V331H188V-11Z"/>
+    <path fill="#faf8ff" transform="translate(2588 0)" d="M149 -11V74H61V381H149V466.98161764705884H415V638H543V74H453V-11ZM188 125H414V331H188Z"/>
+    <path fill="#faf8ff" transform="translate(3191 0)" d="M61 -11V638H188V-11Z"/>
+    <path fill="#faf8ff" transform="translate(3440 0)" d="M149 -11V74H61V381H149V467H453V381H542V246H414V331H188V297H365V160H188V125H414V212H542V75H453V-11Z"/>
+  </g>
 </svg>

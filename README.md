@@ -60,9 +60,11 @@ Table-number verification is the class check requested for the leaderboard, not 
 
 ## Files
 
-- `public/`: player and admin interfaces, CSS, clear wordmark, original pixel mascot share artwork and app icons, reusable name picker.
+- `public/`: player and admin interfaces, CSS, solid pixel wordmark, original pixel mascot share artwork and app icons, reusable name picker.
 - `server/worker.js`: API, private asset authorization, SQLite data model.
 - `server/core.js`: time-zone, crop validation, scoring, and stats logic.
 - `scripts/build.mjs`: separate explicit public and protected build outputs.
 - `scripts/import-library.py`: local roster/photo import and verification.
 - `tests/`: server, build-privacy, and frontend utility tests.
+
+Typography uses self-hosted [Pixelify Sans](https://github.com/google/fonts/tree/main/ofl/pixelifysans), Copyright 2021 The Pixelify Sans Project Authors. The SIL Open Font License is shipped in `public/assets/PixelifySans-OFL.txt`; the SVG wordmark uses its bold glyph outlines.
