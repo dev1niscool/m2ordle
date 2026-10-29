@@ -49,6 +49,7 @@ input{font-size:18px}
 .reset-clock small{font-size:11px;letter-spacing:.2px}
 .reset-clock strong{font-size:25px}
 .share-button{font-size:15px;min-height:64px}
+.result-bottom{margin-top:22px}
 .claim-button{font-size:15px}
 .claim-note{font-size:14px;line-height:1.5}
 .identity-copy,.leaderboard-intro{font-size:15px;line-height:1.7}
