@@ -277,38 +277,44 @@ test('leaderboard claims require a completed game and the private table; scores 
   assert.deepEqual(otherBoard.entries.map(({isYou, ...entry}) => entry), board.entries.map(({isYou, ...entry}) => entry));
 });
 
-test('leaderboard reads require this session to finish and verify today’s result', async t => {
+test('leaderboard reads are public without creating sessions, games or claims', async t => {
   const f = fixture(t);
-  assert.equal((await f.call('leaderboard')).code, 401);
-  assert.equal((await f.call('leaderboard', undefined, 'unknown-session')).code, 401);
-  const {token} = await f.call('session', {});
-  const locked = async () => {
+  const snapshot = () => ({sessions: f.db.prepare('SELECT * FROM sessions').all(), games: f.db.prepare('SELECT * FROM games').all(), claims: f.db.prepare('SELECT * FROM claims').all()});
+  const publicRead = async (token, expectedEntries = []) => {
+    const before = snapshot();
     const result = await f.call('leaderboard', undefined, token);
-    assert.equal(result.code, 403);
-    assert.match(result.error, /Finish today’s M2ordle.*table-verified result/);
-    assert.equal('entries' in result, false);
+    assert.equal(result.code, 200);
+    assert.equal(result.date, TODAY);
+    assert.equal(result.nextReset, '2026-10-30T05:00:00.000Z');
+    assert.deepEqual(result.entries, expectedEntries);
+    assert.deepEqual(snapshot(), before);
   };
-  await locked();
+  await publicRead();
+  await publicRead('unknown-session');
   await f.publish();
-  await f.call('game', undefined, token);
-  await locked();
-  await f.guess(token);
-  await locked();
+  const scorer = await f.start(); await f.guess(scorer.token);
   const identity = roster[10], claim = {personId: identity.id, table: identity.table};
-  assert.equal((await f.call('claim', {...claim, table: 999}, token)).code, 401);
-  await locked();
-  assert.equal((await f.call('claim', claim, token)).code, 200);
-  const board = await f.call('leaderboard', undefined, token);
-  assert.equal(board.code, 200);
-  assert.equal(board.date, TODAY);
-  assert.equal(board.nextReset, '2026-10-30T05:00:00.000Z');
+  assert.equal((await f.call('claim', claim, scorer.token)).code, 200);
+  const board = await f.call('leaderboard', undefined, scorer.token);
   assert.equal(board.entries[0].name, identity.name);
   assert.deepEqual(board.entries.filter(entry => entry.isYou).map(entry => entry.personId), [identity.id]);
-  const other = await f.start();
-  assert.equal((await f.call('leaderboard', undefined, other.token)).code, 403);
+  const anonymousEntries = board.entries.map(entry => ({...entry, isYou: false}));
+  await publicRead(undefined, anonymousEntries);
+  await publicRead('unknown-session', anonymousEntries);
+  const {token} = await f.call('session', {});
+  await publicRead(token, anonymousEntries);
+  await f.call('game', undefined, token);
+  await publicRead(token, anonymousEntries);
+  await f.guess(token);
+  await publicRead(token, anonymousEntries);
+  assert.equal((await f.call('claim', {personId: roster[11].id, table: 999}, token)).code, 401);
+  await publicRead(token, anonymousEntries);
+  // Expired browser sessions may still read the standings, but do not identify a player.
+  f.db.prepare('DELETE FROM sessions WHERE token=?').run(scorer.token);
+  await publicRead(scorer.token, anonymousEntries);
 });
 
-test('leaderboard access resets at Central midnight and a verified loss unlocks cumulative scores', async t => {
+test('public leaderboard stays available across Central midnight and retains a verified player highlight', async t => {
   const f = fixture(t); await f.publish(); await f.publish('2026-10-30');
   const {token} = await f.start();
   await f.guess(token);
@@ -317,11 +323,18 @@ test('leaderboard access resets at Central midnight and a verified loss unlocks 
   f.setTime('2026-10-30T04:59:59Z');
   assert.equal((await f.call('leaderboard', undefined, token)).code, 200);
   f.setTime('2026-10-30T05:00:00Z');
-  assert.equal((await f.call('leaderboard', undefined, token)).code, 403);
-  assert.equal((await f.call('leaderboard?date=' + TODAY, undefined, token)).code, 403);
+  const nextDay = await f.call('leaderboard', undefined, token);
+  assert.equal(nextDay.code, 200);
+  assert.equal(nextDay.date, '2026-10-30');
+  assert.deepEqual(nextDay.entries.filter(entry => entry.isYou).map(entry => entry.personId), [identity.id]);
+  assert.deepEqual(await f.call('leaderboard?date=' + TODAY, undefined, token), nextDay);
+  const anonymous = await f.call('leaderboard');
+  assert.equal(anonymous.code, 200);
+  assert.deepEqual(anonymous.entries, nextDay.entries.map(entry => ({...entry, isYou: false})));
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM games WHERE date=?').get('2026-10-30').count, 0);
   await f.call('game', undefined, token);
   for (let i = 1; i <= 5; i++) await f.guess(token, roster[i].id);
-  assert.equal((await f.call('leaderboard', undefined, token)).code, 403);
+  assert.equal((await f.call('leaderboard', undefined, token)).code, 200);
   const result = await f.call('claim', claim, token);
   assert.equal(result.code, 200);
   assert.equal(result.status, 'lost');
@@ -331,6 +344,21 @@ test('leaderboard access resets at Central midnight and a verified loss unlocks 
   assert.equal(board.nextReset, '2026-10-31T05:00:00.000Z');
   assert.deepEqual(board.entries.map(({points, wins, played}) => ({points, wins, played})), [{points: 5, wins: 1, played: 2}]);
   assert.deepEqual(board.entries.filter(entry => entry.isYou).map(entry => entry.personId), [identity.id]);
+});
+
+test('leaderboard highlights only the latest verified identity in a shared browser', async t => {
+  const f = fixture(t); await f.publish(); await f.publish('2026-10-30');
+  const {token} = await f.start(); await f.guess(token);
+  const first = roster[10], latest = roster[11];
+  assert.equal((await f.call('claim', {personId: first.id, table: first.table}, token)).code, 200);
+  f.setTime('2026-10-30T05:00:00Z');
+  await f.call('game', undefined, token); await f.guess(token);
+  assert.equal((await f.call('claim', {personId: latest.id, table: latest.table}, token)).code, 200);
+  f.restart();
+  const board = await f.call('leaderboard', undefined, token);
+  assert.equal(board.code, 200);
+  assert.equal(board.entries.length, 2);
+  assert.deepEqual(board.entries.filter(entry => entry.isYou).map(entry => entry.personId), [latest.id]);
 });
 
 test('table guessing limits survive restarts and apply across sessions on the same IP', async t => {

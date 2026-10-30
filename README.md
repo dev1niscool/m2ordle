@@ -10,7 +10,7 @@ All 181 accepted names and their roster IDs are committed in `public/classmates.
 
 Results include personal stats, today's class guess distribution, a Central Time countdown, and a large copy button. Shared results contain exactly five colored squares. A first-guess solve earns 5 points, then 4, 3, 2, or 1. Unsolved games earn 0. Verified daily results add to the cumulative leaderboard; ties use wins, then average guesses (a loss counts as 6), then name.
 
-Viewing the classwide leaderboard requires finishing today's M2ordle and submitting a table-verified result in the same browser. Both solved and unsolved completed games qualify. Access is checked by the server and resets at midnight Central Time; previous days' verified results keep their points but do not unlock today's standings.
+Anyone can view the cumulative classwide leaderboard from the homepage, without starting or finishing a puzzle or verifying a name. Adding a score still requires a completed game and table-number verification; both solved and unsolved completed games qualify. Returning browsers highlight and scroll to the classmate from their most recent verified result, even on a new day.
 
 ## Schedule puzzles
 

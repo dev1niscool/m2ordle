@@ -200,7 +200,7 @@ async function copyResult(body){
   catch{let area=body.querySelector('.copy-fallback');if(!area){area=document.createElement('textarea');area.className='copy-fallback';area.readOnly=true;area.setAttribute('aria-label','Result text to copy');body.querySelector('.result-bottom').after(area);}area.value=text;area.focus();area.select();toast('Select and copy your result below.');}
 }
 function identity(){
-  const body=modal('ADD YOUR RESULT');body.innerHTML='<p class="identity-copy">Choose your name, then verify your table number to add your result and unlock today’s classwide leaderboard.</p><form class="identity-form"><div data-identity></div><button class="pixel-button primary wide" disabled>CONTINUE</button></form><button class="text-button back-link">← Back to results</button>';
+  const body=modal('ADD YOUR RESULT');body.innerHTML='<p class="identity-copy">Choose your name, then verify your table number to add your result to the classwide leaderboard.</p><form class="identity-form"><div data-identity></div><button class="pixel-button primary wide" disabled>CONTINUE</button></form><button class="text-button back-link">← Back to results</button>';
   const button=body.querySelector('form button');const picker=namePicker(body.querySelector('[data-identity]'),people,{label:'Your name',placeholder:'Find your name…',onSelect:p=>button.disabled=!p});body.querySelector('form').onsubmit=e=>{e.preventDefault();if(picker.selected)verifyIdentity(picker.selected);};body.querySelector('.back-link').onclick=results;picker.input.focus();
 }
 function verifyIdentity(person){
@@ -218,16 +218,9 @@ function verifyIdentity(person){
     }catch(error){if(body.isConnected&&currentNavigation===navigation){body.querySelector('.feedback').textContent=error.message;button.disabled=false;button.textContent='CONFIRM & ADD RESULT';}}
   };body.querySelector('input').focus();
 }
-function lockedLeaderboard(body){
-  delete body.dataset.leaderboardReset;
-  body.closest('dialog').classList.remove('leaderboard-dialog');
-  body.innerHTML='<p class="identity-copy">Finish today’s M2ordle, then add your name and verify your table number to view the classwide leaderboard.</p><p class="help-note">Unlock the cumulative standings each day by adding that day’s result. Completed games count whether you solve the portrait or use all five guesses.</p><button class="pixel-button primary wide">OPEN TODAY’S M2ORDLE</button>';
-  body.querySelector('button').onclick=()=>{closeModal();start();};
-}
 async function leaderboard(){
   const body=modal('CLASS LEADERBOARD');body.innerHTML='<p class="leaderboard-intro">Every M2ordle counts. Earn 5 points for a first-guess solve, down to 1 point on guess five.</p><p class="identity-copy" data-loading>Loading the class standings…</p>';
-  if(!token){lockedLeaderboard(body);return;}
-  try{const data=await api('/api/leaderboard');if(!body.isConnected)return;body.dataset.leaderboardReset=data.nextReset;body.querySelector('[data-loading]').remove();
+  try{const data=await api('/api/leaderboard');if(!body.isConnected)return;body.querySelector('[data-loading]').remove();
     if(!data.entries.length){const empty=document.createElement('p');empty.className='leaderboard-empty';empty.textContent='A fresh start for the class. Finish a puzzle and add your result to claim the first spot.';body.append(empty);return;}
     body.closest('dialog').classList.add('leaderboard-dialog');
     const standings=document.createElement('div');standings.className='leaderboard-scroll';standings.tabIndex=0;standings.setAttribute('role','region');standings.setAttribute('aria-label','Classwide leaderboard standings');
@@ -250,11 +243,9 @@ async function leaderboard(){
       // Scroll only the standings, leaving the page and dialog controls in place.
       standings.scrollTop+=row.top-frame.top-standings.clientTop-headerHeight-(standings.clientHeight-headerHeight-row.height)/2;
     });
-  }catch(error){if(body.isConnected){if(error.status===401||error.status===403)lockedLeaderboard(body);else body.querySelector('[data-loading]').textContent=error.message;}}
+  }catch(error){if(body.isConnected)body.querySelector('[data-loading]').textContent=error.message;}
 }
 async function checkReset(){
-  const board=activeDialog?.querySelector('[data-leaderboard-reset]');
-  if(board&&Date.now()>=new Date(board.dataset.leaderboardReset).getTime())lockedLeaderboard(board);
   if(!game||busy)return;
   if(Date.now()>=new Date(game.nextReset).getTime()&&screen==='game') {closeModal();game=null;await start();}
 }

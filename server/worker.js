@@ -176,13 +176,12 @@ export class M2ordle {
     });
   }
   leaderboard(token) {
-    const now = this.now(), date = centralDate(now), game = this.gameRow(token, date);
-    const claim = this.one('SELECT person_id FROM claims WHERE session=? AND date=?', token, date);
-    if (!game || !['won', 'lost'].includes(game.status) || !claim) fail('Finish today’s M2ordle and add your table-verified result to view the class leaderboard.', 403);
+    const now = this.now(), date = centralDate(now);
+    const claim = token && this.one('SELECT claims.person_id FROM claims JOIN sessions ON sessions.token=claims.session WHERE claims.session=? ORDER BY claims.date DESC LIMIT 1', token);
     const entries = this.all('SELECT person_id AS personId,SUM(points) AS points,SUM(won) AS wins,COUNT(*) AS played,AVG(attempts) AS averageGuesses FROM claims GROUP BY person_id')
       .map(row => ({...row, name: this.people.get(row.personId)?.name || 'Classmate'}))
       .sort((a, b) => b.points - a.points || b.wins - a.wins || a.averageGuesses - b.averageGuesses || a.name.localeCompare(b.name));
-    return {date, nextReset: nextCentralMidnight(now), entries: entries.map((row, index) => ({rank: index + 1, ...row, isYou: row.personId === claim.person_id}))};
+    return {date, nextReset: nextCentralMidnight(now), entries: entries.map((row, index) => ({rank: index + 1, ...row, isYou: row.personId === claim?.person_id}))};
   }
   async body(request) {
     const maxLength = new URL(request.url).pathname === '/api/admin/puzzle' ? 6500000 : 4096;
@@ -324,6 +323,7 @@ export class M2ordle {
       }
       if (method === 'GET' && path === '/api/health') return json({ok: true});
       if (method === 'GET' && path === '/api/roster') return json({people: roster.map(({id, name}) => ({id, name}))});
+      if (method === 'GET' && path === '/api/leaderboard') return json(this.leaderboard(bearer(request)));
       if (method === 'POST' && path === '/api/session') {
         await this.body(request);
         this.checkLimit('session:' + ipOf(request), 600, 15 * 60000);
@@ -332,7 +332,6 @@ export class M2ordle {
         return json({token}, 201);
       }
       const session = this.session(request);
-      if (method === 'GET' && path === '/api/leaderboard') return json(this.leaderboard(session.token));
       if (method === 'GET' && path === '/api/game') return json(this.atomic(() => this.state(session.token, centralDate(this.now()), true)));
       if (method === 'GET' && path === '/api/image') return this.image(session.token, url);
       if (method === 'GET' && path === '/api/stats') {
