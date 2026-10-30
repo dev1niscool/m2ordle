@@ -340,7 +340,8 @@ export class M2ordle {
       if (method === 'GET' && path === '/api/image') return this.image(session.token, url);
       if (method === 'GET' && path === '/api/stats') {
         const today = centralDate(this.now());
-        return json(calculateStats(this.all('SELECT date,status,guesses FROM games WHERE session=?', session.token), today, this.all('SELECT status,guesses FROM games WHERE date=?', today)));
+        const publishedDates = this.all('SELECT date FROM puzzles WHERE published=1 AND date<=?', today).map(row => row.date);
+        return json(calculateStats(this.all('SELECT date,status,guesses FROM games WHERE session=?', session.token), today, this.all('SELECT status,guesses FROM games WHERE date=?', today), publishedDates));
       }
       if (method === 'POST' && path === '/api/guess') return json(this.guess(session.token, await this.body(request)));
       if (method === 'POST' && path === '/api/claim') {

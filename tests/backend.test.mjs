@@ -501,3 +501,83 @@ test('streaks break on missed or lost days and preserve yesterday’s ongoing st
   rows.push({date: '2026-10-29', status: 'lost', guesses: '[]'});
   assert.equal(calculateStats(rows, '2026-10-29', []).streak, 0);
 });
+
+test('stats carry a Friday streak through closed weekend days and Monday across the fall DST change', async t => {
+  const f = fixture(t);
+  for (const date of [TODAY, '2026-10-30', '2026-11-02']) assert.equal((await f.publish(date)).code, 200);
+  assert.equal((await f.publish('2026-10-31', {published: false})).code, 200);
+  const {token} = await f.start(); await f.guess(token);
+  f.setTime('2026-10-30T17:00:00Z');
+  await f.call('game', undefined, token); await f.guess(token);
+  const missedMonday = await f.start(); await f.guess(missedMonday.token);
+  const savedGames = f.db.prepare('SELECT * FROM games ORDER BY session,date').all();
+  const savedPuzzles = f.db.prepare('SELECT * FROM puzzles ORDER BY date').all();
+  for (const now of ['2026-10-31T05:00:00Z', '2026-11-01T05:00:00Z', '2026-11-02T05:59:59Z', '2026-11-02T06:00:00Z']) {
+    f.setTime(now); f.restart();
+    const stats = await f.call('stats', undefined, token);
+    assert.equal(stats.code, 200);
+    assert.equal(stats.streak, 2, now);
+    assert.equal(stats.maxStreak, 2);
+    assert.equal(stats.played, 2);
+    assert.equal(stats.wins, 2);
+    assert.deepEqual(stats.distribution, [2, 0, 0, 0, 0]);
+    assert.deepEqual(f.db.prepare('SELECT * FROM games ORDER BY session,date').all(), savedGames, 'closed days and stats reads do not create games');
+    assert.deepEqual(f.db.prepare('SELECT * FROM puzzles ORDER BY date').all(), savedPuzzles, 'streak calculation does not change the published schedule');
+  }
+  await f.call('game', undefined, token);
+  assert.equal((await f.call('stats', undefined, token)).streak, 2, 'Monday remains available to extend the streak');
+  await f.guess(token);
+  const monday = await f.call('stats', undefined, token);
+  assert.equal(monday.streak, 3, 'a Monday win adds one, not three, to the Friday streak');
+  assert.equal(monday.maxStreak, 3);
+  assert.equal(monday.played, 3);
+  f.setTime('2026-11-03T06:00:00Z');
+  assert.equal((await f.call('stats', undefined, token)).streak, 3);
+  const missed = await f.call('stats', undefined, missedMonday.token);
+  assert.equal(missed.streak, 0, 'missing Monday still breaks the streak on Tuesday');
+  assert.equal(missed.maxStreak, 1);
+});
+
+test('published weekend puzzles count toward streaks while missed and lost weekend puzzles break them', async t => {
+  for (const weekendDate of ['2026-10-31', '2026-11-01']) {
+    await t.test(weekendDate, async t => {
+      const f = fixture(t);
+      for (const date of ['2026-10-30', weekendDate, '2026-11-02']) assert.equal((await f.publish(date)).code, 200);
+      f.setTime('2026-10-30T17:00:00Z');
+      const winner = await f.start(), missed = await f.start(), loser = await f.start();
+      for (const player of [winner, missed, loser]) await f.guess(player.token);
+      f.setTime(weekendDate + 'T17:00:00Z');
+      for (const player of [winner, missed, loser]) {
+        await f.call('game', undefined, player.token);
+        assert.equal((await f.call('stats', undefined, player.token)).streak, 1, 'today’s scheduled puzzle can still be completed');
+      }
+      await f.guess(winner.token);
+      for (let i = 1; i <= 5; i++) await f.guess(loser.token, roster[i].id);
+      assert.equal((await f.call('stats', undefined, loser.token)).streak, 0, 'a loss breaks the streak immediately');
+      f.setTime(weekendDate === '2026-10-31' ? '2026-11-01T05:00:00Z' : '2026-11-02T06:00:00Z');
+      f.restart();
+      assert.equal((await f.call('stats', undefined, missed.token)).streak, 0, 'an unfinished published weekend puzzle is a missed day');
+      assert.equal((await f.call('stats', undefined, winner.token)).streak, 2);
+      f.setTime('2026-11-02T17:00:00Z');
+      for (const [player, expectedStreak] of [[winner, 3], [missed, 1], [loser, 1]]) {
+        await f.call('game', undefined, player.token); await f.guess(player.token);
+        const stats = await f.call('stats', undefined, player.token);
+        assert.equal(stats.streak, expectedStreak);
+        assert.equal(stats.maxStreak, expectedStreak);
+      }
+    });
+  }
+});
+
+test('historical best streaks skip only unpublished weekend gaps without adding free wins', () => {
+  const won = date => ({date, status: 'won', guesses: JSON.stringify([{correct: true}])});
+  const rows = ['2026-10-29', '2026-10-30', '2026-11-02', '2026-11-04'].map(won);
+  const dates = rows.map(row => row.date);
+  const stats = calculateStats(rows, '2026-11-04', [], dates);
+  assert.equal(stats.maxStreak, 3, 'Thursday, Friday and Monday are consecutive wins across a closed weekend');
+  assert.equal(stats.streak, 1, 'an unpublished Tuesday remains a weekday gap');
+  assert.equal(stats.played, 4);
+  assert.equal(stats.wins, 4);
+  assert.deepEqual(stats.distribution, [4, 0, 0, 0, 0]);
+  assert.equal(calculateStats(rows, '2026-11-04', [], [...dates, '2026-11-01']).maxStreak, 2, 'a missed published Sunday also separates historical streaks');
+});

@@ -10,6 +10,8 @@ All 181 accepted names and their roster IDs are committed in `public/classmates.
 
 Results include personal stats, today's class guess distribution, a Central Time countdown, and a large copy button. Shared results contain exactly five colored squares. A first-guess solve earns 5 points, then 4, 3, 2, or 1. Unsolved games earn 0. Verified daily results add to the cumulative leaderboard; ties use wins, then average guesses (a loss counts as 6), then name.
 
+Unpublished Saturdays and Sundays preserve streaks without adding wins: a Friday streak carries through a closed weekend into Monday, and solving Monday adds one. Published weekend puzzles still count, so missing or losing one breaks the streak. Weekday gaps keep their usual behavior. Current and best streaks are calculated from saved games and the published schedule in Central Time.
+
 Anyone can view the cumulative classwide leaderboard from the homepage, without starting or finishing a puzzle or verifying a name. Adding a score still requires a completed game and table-number verification; both solved and unsolved completed games qualify. Returning browsers highlight and scroll to the classmate from their most recent verified result, even on a new day.
 
 ## Schedule puzzles

@@ -42,7 +42,17 @@ export function validateJpeg(value) {
   if (data.length < 16 || data.charCodeAt(0) !== 255 || data.charCodeAt(1) !== 216 || data.charCodeAt(data.length - 2) !== 255 || data.charCodeAt(data.length - 1) !== 217) throw new Error('An image is not a valid JPEG.');
   return encoded;
 }
-export function calculateStats(rows, today, classRows) {
+export function calculateStats(rows, today, classRows, publishedDates = []) {
+  const published = new Set(publishedDates);
+  const continuesStreak = (from, to) => {
+    const end = Date.parse(to + 'T00:00:00Z');
+    // Only intervening days can break a streak; today's puzzle can still be completed.
+    for (let time = Date.parse(from + 'T00:00:00Z') + 86400000; time < end; time += 86400000) {
+      const date = new Date(time), weekday = date.getUTCDay();
+      if ((weekday !== 0 && weekday !== 6) || published.has(date.toISOString().slice(0, 10))) return false;
+    }
+    return true;
+  };
   const completed = rows.filter(r => r.status !== 'playing').sort((a, b) => a.date.localeCompare(b.date));
   const distribution = Array(MAX_GUESSES).fill(0), todayDistribution = Array(MAX_GUESSES).fill(0);
   let wins = 0, maxStreak = 0, running = 0, prior = null;
@@ -51,13 +61,13 @@ export function calculateStats(rows, today, classRows) {
       const count = JSON.parse(row.guesses).length;
       distribution[count - 1]++;
       wins++;
-      running = prior && dayDistance(prior, row.date) === 1 ? running + 1 : 1;
+      running = prior && continuesStreak(prior, row.date) ? running + 1 : 1;
       maxStreak = Math.max(maxStreak, running);
     } else running = 0;
     prior = row.date;
   }
   const last = completed.at(-1);
-  const streak = last && dayDistance(last.date, today) <= 1 ? running : 0;
+  const streak = last && continuesStreak(last.date, today) ? running : 0;
   let todayFailed = 0;
   for (const row of classRows) {
     if (row.status === 'won') todayDistribution[JSON.parse(row.guesses).length - 1]++;
