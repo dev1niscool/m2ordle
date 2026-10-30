@@ -85,3 +85,5 @@ Table-number verification is the class check requested for the leaderboard, not 
 - `tests/`: server, build-privacy, and frontend utility tests.
 
 Typography uses self-hosted [Pixelify Sans](https://github.com/google/fonts/tree/main/ofl/pixelifysans), Copyright 2021 The Pixelify Sans Project Authors. The SIL Open Font License is shipped in `public/assets/PixelifySans-OFL.txt`; the SVG wordmark uses its bold glyph outlines.
+
+The small `M2ordle Pixel Five` font overrides only the numeral 5 with a flat top and open sides, keeping the pixel style while distinguishing it from 8. It preserves the original digit widths and weight range, and uses the same OFL license. Rebuild its committed WOFF2 with `python scripts/make-five-font.py` after installing `fonttools[woff]`; normal site builds use the committed asset.
