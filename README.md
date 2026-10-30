@@ -16,7 +16,7 @@ Anyone can view the cumulative classwide leaderboard from the homepage, without 
 
 Open `admin.html` and enter the owner password. Select a date in the calendar, select a grouped portrait or alternate pose, and choose the person's name from the roster. The portraits are deliberately **not automatically identified**. Set five square crops by dragging or using arrow keys and adjusting the crop-size slider. Later crops must be at least as wide as earlier crops; they may move to a different area of the photo. The full-photo reveal is generated automatically in the same square frame.
 
-Save a draft or publish. Future days can be edited until somebody opens that day's live puzzle. A played puzzle is locked to keep scores consistent. If a day has no published puzzle, players see “Check again, or contact Devin to update today's M2ordle.” There is no event countdown on the home screen. Puzzle numbering starts at the earliest published day; calendar days after that continue numbering, including gaps.
+Save a draft or publish. Future days can be edited until somebody opens that day's live puzzle. A played puzzle is locked to keep scores consistent. If a weekday has no published puzzle, players see “Check again, or contact Devin to update today's M2ordle.” On Saturdays and Sundays without a published puzzle, they see “M2ordle is closed for the weekend” and a reminder to come back Monday. Weekend dates follow Central Time, and published weekend puzzles remain playable as usual. There is no event countdown on the home screen. Puzzle numbering starts at the earliest published day; calendar days after that continue numbering, including gaps.
 
 The control room also includes:
 

@@ -83,7 +83,9 @@ async function renderGame() {
   const thisGeneration=++generation;
   releaseImage();releaseGuessPicker();imageLoading=false;
   if(!game.available){
-    app.innerHTML='<section class="empty-screen"><img class="wordmark" src="./assets/m2ordle.svg?v=13" alt="M2ordle"><div class="empty-icon" aria-hidden="true">＋</div><h1>Today’s frame is on its way.</h1><p>Check again, or contact Devin to update today’s M2ordle.</p><button class="pixel-button primary" data-retry>CHECK AGAIN</button><button class="text-button" data-home>Back to home</button></section>';
+    app.innerHTML='<section class="empty-screen"><img class="wordmark" src="./assets/m2ordle.svg?v=13" alt="M2ordle"><div class="empty-icon" aria-hidden="true">＋</div><h1></h1><p></p><button class="pixel-button primary" data-retry>CHECK AGAIN</button><button class="text-button" data-home>Back to home</button></section>';
+    app.querySelector('h1').textContent=game.reason==='weekend'?'M2ordle is closed for the weekend.':'Today’s frame is on its way.';
+    app.querySelector('p').textContent=game.message||'Check again, or contact Devin to update today’s M2ordle.';
     app.querySelector('[data-retry]').onclick=start;app.querySelector('[data-home]').onclick=home;return;
   }
   const finished=game.status!=='playing';

@@ -75,6 +75,62 @@ test('empty days explain missing content; roster never exposes table assignments
   assert.equal((await f.call('admin/auth', undefined, ADMIN)).code, 200);
 });
 
+test('missing weekend puzzles show the Monday message without creating games or scores', async t => {
+  const f = fixture(t);
+  const {token} = await f.call('session', {});
+  for (const [now, date, nextReset] of [
+    ['2026-10-31T17:00:00Z', '2026-10-31', '2026-11-01T05:00:00.000Z'],
+    ['2026-11-01T17:00:00Z', '2026-11-01', '2026-11-02T06:00:00.000Z'],
+  ]) {
+    f.setTime(now);
+    const game = await f.call('game', undefined, token);
+    assert.deepEqual(game, {code: 200, available: false, reason: 'weekend', date, nextReset, message: 'Come back Monday for the next M2ordle.'});
+    assert.equal((await f.guess(token)).code, 409);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM games').get().count, 0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM claims').get().count, 0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM guess_requests').get().count, 0);
+  }
+});
+
+test('weekend drafts stay closed but publishing a weekend puzzle makes it playable', async t => {
+  const f = fixture(t);
+  const {token} = await f.call('session', {});
+  for (const date of ['2026-10-31', '2026-11-01']) {
+    f.setTime(date + 'T17:00:00Z');
+    assert.equal((await f.publish(date, {published: false})).code, 200);
+    const draft = await f.call('game', undefined, token);
+    assert.equal(draft.available, false);
+    assert.equal(draft.reason, 'weekend');
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM games WHERE date=?').get(date).count, 0);
+    assert.equal((await f.publish(date)).code, 200);
+    const published = await f.call('game', undefined, token);
+    assert.equal(published.available, true);
+    assert.equal(published.status, 'playing');
+    assert.equal('reason' in published, false);
+    assert.equal((await f.guess(token)).status, 'won');
+  }
+});
+
+test('weekend closure follows Central midnight through the fall daylight-saving change', async t => {
+  const f = fixture(t);
+  const {token} = await f.call('session', {});
+  for (const [now, date, weekend, nextReset] of [
+    ['2026-10-31T04:59:59Z', '2026-10-30', false, '2026-10-31T05:00:00.000Z'],
+    ['2026-10-31T05:00:00Z', '2026-10-31', true, '2026-11-01T05:00:00.000Z'],
+    ['2026-11-01T05:00:00Z', '2026-11-01', true, '2026-11-02T06:00:00.000Z'],
+    ['2026-11-02T05:59:59Z', '2026-11-01', true, '2026-11-02T06:00:00.000Z'],
+    ['2026-11-02T06:00:00Z', '2026-11-02', false, '2026-11-03T06:00:00.000Z'],
+  ]) {
+    f.setTime(now);
+    const game = await f.call('game', undefined, token);
+    assert.equal(game.available, false);
+    assert.equal(game.date, date);
+    assert.equal(game.reason === 'weekend', weekend);
+    assert.equal(game.message, weekend ? 'Come back Monday for the next M2ordle.' : "Check again, or contact Devin to update today's M2ordle.");
+    assert.equal(game.nextReset, nextReset);
+  }
+});
+
 test('admin validates dates, crop bounds, progression, portraits and JPEG payloads', async t => {
   const f = fixture(t);
   assert.equal((await f.publish('2026-02-30')).code, 400);

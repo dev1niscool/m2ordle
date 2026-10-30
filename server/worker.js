@@ -107,7 +107,11 @@ export class M2ordle {
   }
   state(token, date = centralDate(this.now()), create = false) {
     const nextReset = nextCentralMidnight(this.now()), puzzle = this.puzzle(date);
-    if (!puzzle) return {available: false, date, nextReset, message: "Check again, or contact Devin to update today's M2ordle."};
+    if (!puzzle) {
+      const weekday = new Date(date + 'T00:00:00Z').getUTCDay();
+      if (weekday === 0 || weekday === 6) return {available: false, reason: 'weekend', date, nextReset, message: 'Come back Monday for the next M2ordle.'};
+      return {available: false, date, nextReset, message: "Check again, or contact Devin to update today's M2ordle."};
+    }
     const row = this.gameRow(token, date, create);
     if (!row) fail('Start today’s puzzle first.', 409);
     const guesses = JSON.parse(row.guesses), completed = row.status !== 'playing';
