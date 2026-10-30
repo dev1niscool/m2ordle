@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {searchPeople, shareText, countdown, namePopupLayout} from '../public/shared.js';
+import {searchPeople, shareText, countdown, namePopupHeight} from '../public/shared.js';
 test('autocomplete matches first and last word prefixes, accents, and multiword names',()=>{
   const people=[{id:'a',name:'John Smith'},{id:'b',name:'José Jones'},{id:'c',name:'Amy Johnson'}];
   assert.deepEqual(searchPeople(people,'jo').map(p=>p.id),['a','b','c']);
@@ -17,70 +17,26 @@ test('countdown supports a 25-hour DST day and clamps expired time',()=>{
   assert.equal(countdown('2026-01-01',Date.parse('2026-01-02')),'00:00:00');
 });
 
-function assertPopupFits(layout, bounds, contentHeight = 230) {
-  const height = Math.min(contentHeight, layout.maxHeight);
-  assert.ok(layout.left >= bounds.left, 'menu stays inside the visible left edge');
-  assert.ok(layout.left + layout.width <= bounds.right, 'menu stays inside the visible right edge');
-  assert.ok(layout.top >= bounds.top, 'menu stays inside the visible top edge');
-  assert.ok(layout.top + height <= bounds.bottom, 'menu stays above the keyboard or dialog bottom');
-  assert.ok(layout.width > 0 && layout.maxHeight > 0, 'menu retains usable space');
-}
 
-test('name menu opens above an input near the keyboard without overflowing the visible viewport',()=>{
-  const bounds = {left:0, top:0, right:390, bottom:400};
-  const input = {left:22, top:310, right:268, bottom:364, width:246};
-  const layout = namePopupLayout(input, bounds, 1200);
-  assert.equal(layout.above, true);
-  assert.equal(layout.width, input.width);
-  assert.ok(layout.top + layout.maxHeight < input.top, 'menu does not cover the input');
-  assertPopupFits(layout, bounds, 1200);
+test('name menu height shrinks with the visible keyboard viewport without hiding panned inputs',()=>{
+  const input = {top:310, bottom:364};
+  assert.equal(namePopupHeight(input, 320), 128);
+  assert.equal(namePopupHeight({top:-20, bottom:34}, 320), 128, 'a shifted input coordinate does not suppress suggestions');
 });
 
-test('name menu uses space below the input when a full list fits',()=>{
-  const bounds = {left:0, top:0, right:390, bottom:844};
-  const input = {left:22, top:100, right:268, bottom:154, width:246};
-  const layout = namePopupLayout(input, bounds);
-  assert.equal(layout.above, false);
-  assert.ok(layout.top > input.bottom);
-  assertPopupFits(layout, bounds);
+test('name menu is capped at a manageable height on large screens',()=>{
+  assert.equal(namePopupHeight({top:600}, 1200), 200);
+  assert.equal(namePopupHeight({top:600}, 844), 200);
 });
 
-test('name menu respects a visual viewport panned down by the phone keyboard',()=>{
-  const bounds = {left:0, top:300, right:390, bottom:650};
-  const input = {left:22, top:450, right:272, bottom:500, width:250};
-  const layout = namePopupLayout(input, bounds, 1200);
-  assert.equal(layout.above, false, 'space outside the visible top edge is not counted');
-  assert.ok(layout.maxHeight < 230, 'long results scroll within the available space');
-  assertPopupFits(layout, bounds, 1200);
+test('name menu respects the space above an input inside a dialog',()=>{
+  assert.equal(namePopupHeight({top:260}, 844, 150), 96);
+  assert.equal(namePopupHeight({top:110}, 844, 0), 96, 'a dialog at the viewport origin is still constrained');
+  assert.equal(namePopupHeight({top:560}, 844, 450), 96, 'panning the dialog and input together preserves available height');
 });
 
-test('name menu stays inside narrow dialog bounds even when its anchor is wider',()=>{
-  const bounds = {left:40, top:170, right:350, bottom:560};
-  const input = {left:20, top:400, right:420, bottom:450, width:400};
-  const layout = namePopupLayout(input, bounds, 1200);
-  assert.ok(layout.width < input.width);
-  assertPopupFits(layout, bounds, 1200);
-});
-
-test('changing from many names to one no-match row does not flip the menu side',()=>{
-  const bounds = {left:0, top:0, right:390, bottom:420};
-  const input = {left:22, top:250, right:268, bottom:300, width:246};
-  const many = namePopupLayout(input, bounds, 1200);
-  const noMatch = namePopupLayout(input, bounds, 54);
-  assert.equal(many.above, true);
-  assert.equal(noMatch.above, many.above);
-  assert.equal(noMatch.left, many.left);
-  assert.equal(noMatch.width, many.width);
-  assert.equal(noMatch.top + Math.min(54, noMatch.maxHeight), many.top + many.maxHeight, 'both menus remain anchored just above the input');
-  assertPopupFits(many, bounds, 1200);
-  assertPopupFits(noMatch, bounds, 54);
-});
-
-test('name menu accounts for horizontal visual-viewport offsets',()=>{
-  const bounds = {left:120, top:20, right:360, bottom:500};
-  const input = {left:80, top:100, right:340, bottom:154, width:260};
-  const layout = namePopupLayout(input, bounds);
-  assert.ok(layout.left > input.left);
-  assert.ok(layout.width < input.width);
-  assertPopupFits(layout, bounds);
+test('name menu retains a usable minimum when viewport or dialog coordinates are tight',()=>{
+  assert.equal(namePopupHeight({top:80}, 100), 64);
+  assert.equal(namePopupHeight({top:80}, 844, 60), 64);
+  assert.equal(namePopupHeight({top:80}, 844, 100), 64, 'inconsistent dialog coordinates never reduce the list to zero');
 });

@@ -1,4 +1,5 @@
-import {MAX_GUESSES, namePicker, shareText, countdown} from './shared.js?v=7';
+import {MAX_GUESSES, namePicker, shareText, countdown} from './shared.js?v=11';
+import {classmates} from './classmates.js?v=11';
 
 const app = document.querySelector('#app');
 const apiBase = (window.M2ORDLE_CONFIG?.apiBase || '').replace(/\/$/, '');
@@ -10,7 +11,8 @@ const icons = {
   copy:'<path d="M9 8h11v13H9zM15 8V3H4v13h5"/>',
 };
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name]}</svg>`;
-let token = '', people = [], game = null, screen = 'home', busy = false, imageUrl = null, generation = 0, navigation = 0, activeDialog = null, toastTimer;
+const people = classmates;
+let token = '', game = null, screen = 'home', busy = false, imageUrl = null, generation = 0, navigation = 0, activeDialog = null, toastTimer;
 let imageController = null, imageLoading = false, guessPicker = null;
 try { token = localStorage.getItem('m2ordle-session') || ''; } catch {}
 
@@ -26,7 +28,6 @@ async function api(path, {body, auth = true, ...options} = {}) {
 }
 async function ensureSession() {
   if (!token) { const data = await api('/api/session', {body:{},auth:false}); token = data.token; try {localStorage.setItem('m2ordle-session',token);} catch {toast('Allow browser storage to keep your progress between visits.');} }
-  if (!people.length) people = (await api('/api/roster', {auth:false})).people;
 }
 async function getGame() {
   await ensureSession();

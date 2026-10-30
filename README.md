@@ -6,6 +6,8 @@ A daily class-portrait guessing game with the purple pixel arcade style of M2 Mo
 
 Type a first or last name, choose a roster entry, and submit it. Each wrong guess unlocks a larger, repositioned square crop. The fifth miss ends the game; either outcome reveals the full portrait. Progress is saved on the server under an anonymous browser token, so reloading keeps your guesses.
 
+All 181 accepted names and their roster IDs are committed in `public/classmates.js` and served with the site on GitHub Pages. Gameplay and result-name autocomplete use that bundle directly, without fetching a roster from the API. Table assignments and the daily answer remain server-side.
+
 Results include personal stats, today's class guess distribution, a Central Time countdown, and a large copy button. Shared results contain exactly five colored squares. A first-guess solve earns 5 points, then 4, 3, 2, or 1. Unsolved games earn 0. Verified daily results add to the cumulative leaderboard; ties use wins, then average guesses (a loss counts as 6), then name.
 
 Viewing the classwide leaderboard requires finishing today's M2ordle and submitting a table-verified result in the same browser. Both solved and unsolved completed games qualify. Access is checked by the server and resets at midnight Central Time; previous days' verified results keep their points but do not unlock today's standings.
@@ -41,6 +43,8 @@ The local app runs at `http://127.0.0.1:8788`, and the editor at `/admin.html`. 
 
 The primary working copy also contains ignored imports: `server/roster.json`, `server/photos.json`, and `private/portraits`. Keep a private backup of these files and the supplied PDF; a public Git clone does not include them. `scripts/import-library.py` reproducibly imports the supplied PDF and reviewed photo library. Read its arguments before running it on another computer. No automated facial identity matching is involved.
 
+After importing or editing `server/roster.json`, run `node scripts/export-classmates.mjs` and commit the updated `public/classmates.js`. The exporter includes only IDs and names. A full build checks that this public bundle matches the server roster; a static Pages build uses the committed bundle and does not need private imports.
+
 ```sh
 pnpm check
 pnpm test
@@ -64,7 +68,7 @@ pnpm exec wrangler secret put ADMIN_PASSWORD
 M2ORDLE_API_URL=https://m2ordle-api.devinkancherlaawesome-bbc.workers.dev node scripts/build.mjs --static-only
 ```
 
-GitHub Pages must use **GitHub Actions**, not branch/root publishing. The workflow publishes `dist/` on pushes to `main` or a manual dispatch. API and gameplay changes require a separate Worker deployment. Worker deployment embeds the private roster as server code; it is never a public static file.
+GitHub Pages must use **GitHub Actions**, not branch/root publishing. The workflow publishes `dist/` on pushes to `main` or a manual dispatch. API and gameplay changes require a separate Worker deployment. Worker deployment embeds the full roster, including table verification data, as server code; only the names and IDs are published in `classmates.js`.
 
 The full source build writes `dist-worker/` with the public frontend plus `_portraits/`. Worker-first routing authenticates every original portrait request. Public `dist/` has no photos, roster tables, PDF, grouping metadata, passwords, or backend data. Gameplay returns only the currently unlocked cropped JPEG, with the answer and full reveal available after completion. The HTML uses noindex; robots directives are crawler preferences rather than access controls.
 
@@ -77,6 +81,7 @@ Table-number verification is the class check requested for the leaderboard, not 
 - `server/core.js`: time-zone, crop validation, scoring, and stats logic.
 - `scripts/build.mjs`: separate explicit public and protected build outputs.
 - `scripts/import-library.py`: local roster/photo import and verification.
+- `scripts/export-classmates.mjs`: exports the public name bundle from the private roster, excluding table assignments.
 - `tests/`: server, build-privacy, and frontend utility tests.
 
 Typography uses self-hosted [Pixelify Sans](https://github.com/google/fonts/tree/main/ofl/pixelifysans), Copyright 2021 The Pixelify Sans Project Authors. The SIL Open Font License is shipped in `public/assets/PixelifySans-OFL.txt`; the SVG wordmark uses its bold glyph outlines.

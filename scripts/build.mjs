@@ -1,12 +1,13 @@
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {parseClassmates, renderClassmates} from './export-classmates.mjs';
 
 export const PUBLIC_FILES = [
-  'index.html', 'app.js', 'styles.css', 'config.js', 'shared.js',
+  'index.html', 'app.js', 'styles.css', 'config.js', 'shared.js', 'classmates.js',
   'admin.html', 'admin.js', 'admin.css', 'admin-preview.js', 'admin-preview.css', 'favicon.svg', 'robots.txt', 'manifest.webmanifest',
 ];
-const REQUIRED_FILES = ['index.html', 'app.js', 'styles.css', 'admin.html', 'admin.js', 'admin.css'];
+const REQUIRED_FILES = ['index.html', 'app.js', 'styles.css', 'classmates.js', 'admin.html', 'admin.js', 'admin.css'];
 
 function validateApiBase(value) {
   if (!value) return '';
@@ -42,8 +43,12 @@ export async function buildSite({ root = resolve(dirname(fileURLToPath(import.me
   const source = join(root, 'public');
   const dist = join(root, 'dist');
   const workerDist = join(root, 'dist-worker');
+  const publicNames = await readFile(join(source, 'classmates.js'), 'utf8');
+  parseClassmates(publicNames);
   let files = [];
   if (!staticOnly) {
+    const roster = JSON.parse(await readFile(join(root, 'server/roster.json'), 'utf8'));
+    if (publicNames !== renderClassmates(roster)) throw new Error('The public names differ from the server roster. Run node scripts/export-classmates.mjs and commit public/classmates.js before deploying.');
     const groups = JSON.parse(await readFile(join(root, 'server/photos.json'), 'utf8'));
     if (!Array.isArray(groups) || !groups.length) throw new Error('No reviewed portrait groups found. Import the reference library first.');
     const photoIds = new Set();

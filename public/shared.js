@@ -16,18 +16,9 @@ export function countdown(reset, now = Date.now()) {
   const seconds = Math.max(0, Math.ceil((new Date(reset).getTime() - now) / 1000));
   return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(n => String(n).padStart(2, '0')).join(':');
 }
-export function namePopupLayout(rect, bounds, contentHeight = 230) {
-  const margin = 8, gap = 6;
-  const width = Math.max(0, Math.min(rect.width, bounds.right - bounds.left - margin * 2));
-  const below = Math.max(0, bounds.bottom - margin - rect.bottom - gap);
-  const aboveSpace = Math.max(0, rect.top - gap - bounds.top - margin);
-  // Choose a side independently of the number of matches, so typing never flips it.
-  const above = below < 230 && aboveSpace > below;
-  const maxHeight = Math.min(230, above ? aboveSpace : below);
-  const height = Math.min(contentHeight, maxHeight);
-  const left = Math.max(bounds.left + margin, Math.min(rect.left, bounds.right - margin - width));
-  const top = above ? rect.top - gap - height : rect.bottom + gap;
-  return {left, top, width, maxHeight, above};
+export function namePopupHeight(rect, viewportHeight, dialogTop = null) {
+  const height = Math.max(64, Math.min(200, viewportHeight * .4));
+  return dialogTop === null ? height : Math.max(64, Math.min(height, rect.top - dialogTop - 14));
 }
 export function namePicker(container, people, {placeholder = 'Type a classmate’s name…', label = 'Classmate name', onSelect = () => {}, excluded = []} = {}) {
   const id = `names-${crypto.randomUUID()}`;
@@ -50,21 +41,10 @@ export function namePicker(container, people, {placeholder = 'Type a classmate�
     positionFrame = 0;
     if (!input.isConnected) return destroy();
     if (list.hidden) return;
-    const rect = input.getBoundingClientRect(), viewport = window.visualViewport;
-    const bounds = {left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0};
-    bounds.right = bounds.left + (viewport?.width || document.documentElement.clientWidth);
-    bounds.bottom = bounds.top + (viewport?.height || window.innerHeight);
+    // Anchor in CSS to the input. Safari's keyboard can report mismatched visual
+    // viewport offsets; those offsets must never hide or displace the matches.
     const dialog = input.closest('dialog');
-    if (dialog) {
-      const frame = dialog.getBoundingClientRect();
-      bounds.left = Math.max(bounds.left, frame.left); bounds.right = Math.min(bounds.right, frame.right);
-      bounds.top = Math.max(bounds.top, frame.top); bounds.bottom = Math.min(bounds.bottom, frame.bottom);
-    }
-    let layout = namePopupLayout(rect, bounds);
-    list.style.width = `${layout.width}px`; list.style.maxHeight = `${layout.maxHeight}px`;
-    layout = namePopupLayout(rect, bounds, list.getBoundingClientRect().height);
-    list.style.left = `${layout.left}px`; list.style.top = `${layout.top}px`;
-    list.style.visibility = rect.bottom <= bounds.top || rect.top >= bounds.bottom || layout.maxHeight < 40 ? 'hidden' : 'visible';
+    list.style.maxHeight = `${namePopupHeight(input.getBoundingClientRect(), window.visualViewport?.height || window.innerHeight, dialog?.getBoundingClientRect().top ?? null)}px`;
   }
   function trackPosition() {
     if (positioning) return;
