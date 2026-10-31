@@ -8,8 +8,9 @@ export function closePuzzlePreview() {
   dialog.remove();
 }
 
-export function openPuzzlePreview({ source, crops, name, date }) {
-  if (!source?.naturalWidth || !source?.naturalHeight || crops?.length !== 5) return;
+export function openPuzzlePreview({ source, crops, facts = [], name, date }) {
+  const factClues = Array.isArray(facts) && facts.length === 3 && facts.every(fact => typeof fact === 'string' && fact.trim()) ? facts.slice() : [];
+  if (!source?.naturalWidth || !source?.naturalHeight || crops?.length !== (factClues.length ? 3 : 5)) return;
   closePuzzlePreview();
   const frames = crops.map(crop => ({ ...crop }));
   let stage = 0;
@@ -18,7 +19,7 @@ export function openPuzzlePreview({ source, crops, name, date }) {
   dialog.setAttribute('aria-labelledby', 'preview-heading');
   dialog.innerHTML = `<div class="preview-heading"><div><p class="admin-eyebrow">PLAYER PREVIEW</p><h2 id="preview-heading"></h2></div><button type="button" class="admin-icon-button" aria-label="Close preview">×</button></div>
     <p class="preview-note">Try the current clues before publishing. This preview won’t record a game.</p>
-    <div class="preview-frame"><canvas width="640" height="640" role="img"></canvas></div>
+    <div class="preview-frame"><canvas width="640" height="640" role="img"></canvas><section class="preview-facts" aria-label="Lookbook fun facts" hidden><h3></h3><ol></ol></section></div>
     <div class="preview-caption" aria-live="polite"><strong></strong><p></p></div>
     <div class="preview-steps" aria-label="Preview progress"></div>
     <div class="preview-navigation"><button type="button" class="admin-button" data-previous>← Previous</button><button type="button" class="admin-button admin-primary" data-next>Wrong guess →</button></div>
@@ -26,6 +27,7 @@ export function openPuzzlePreview({ source, crops, name, date }) {
   dialog.querySelector('h2').textContent = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
   const canvas = dialog.querySelector('canvas');
   const context = canvas.getContext('2d');
+  const factPanel = dialog.querySelector('.preview-facts');
   const previous = dialog.querySelector('[data-previous]');
   const next = dialog.querySelector('[data-next]');
   const reveal = dialog.querySelector('[data-reveal]');
@@ -39,20 +41,32 @@ export function openPuzzlePreview({ source, crops, name, date }) {
     steps.append(button);
   }
   function paint() {
-    const full = stage === 5;
+    const full = stage === 5, showingFacts = factClues.length > 0 && stage < 2;
+    canvas.hidden = showingFacts;
+    factPanel.hidden = !showingFacts;
     context.fillStyle = '#17102e';
     context.fillRect(0, 0, 640, 640);
-    if (full) {
+    if (showingFacts) {
+      factPanel.querySelector('h3').textContent = stage === 0 ? 'ONE FUN FACT' : 'THREE FUN FACTS';
+      const list = factPanel.querySelector('ol');
+      list.replaceChildren();
+      for (const fact of factClues.slice(0, stage === 0 ? 1 : 3)) {
+        const item = document.createElement('li');
+        item.textContent = fact;
+        list.append(item);
+      }
+      factPanel.scrollTop = 0;
+    } else if (full) {
       const scale = Math.min(640 / source.naturalWidth, 640 / source.naturalHeight);
       const width = source.naturalWidth * scale, height = source.naturalHeight * scale;
       context.drawImage(source, (640 - width) / 2, (640 - height) / 2, width, height);
     } else {
-      const crop = frames[stage], side = crop.size * source.naturalWidth;
+      const crop = frames[stage - (factClues.length ? 2 : 0)], side = crop.size * source.naturalWidth;
       context.drawImage(source, crop.x * source.naturalWidth, crop.y * source.naturalHeight, side, side, 0, 0, 640, 640);
     }
     canvas.setAttribute('aria-label', full ? `Full-photo reveal: ${name}` : `Clue ${stage + 1} of 5, answer hidden`);
     dialog.querySelector('.preview-caption strong').textContent = full ? name : `Clue ${stage + 1} of 5`;
-    dialog.querySelector('.preview-caption p').textContent = full ? 'Full-photo reveal after a correct answer or five misses.' : stage ? `${stage} wrong ${stage === 1 ? 'guess' : 'guesses'} · the next view players see` : 'The first view players see';
+    dialog.querySelector('.preview-caption p').textContent = full ? 'Full-photo reveal after a correct answer or five misses.' : showingFacts ? stage === 0 ? 'The first fact, with no photo shown.' : 'All three facts, with no photo shown.' : stage ? `${stage} wrong ${stage === 1 ? 'guess' : 'guesses'} · the next view players see` : 'The first view players see';
     previous.disabled = stage === 0;
     next.textContent = full ? 'Restart ↺' : stage === 4 ? 'Fifth miss →' : 'Wrong guess →';
     reveal.hidden = full;

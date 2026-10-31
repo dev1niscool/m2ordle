@@ -10,9 +10,9 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon-v3.png">
   <link rel="preload" href="./assets/m2ordle-pixel-digits.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="./assets/pixelify-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./styles.css?v=13">
-  <link rel="stylesheet" href="./admin.css?v=13">
-  <link rel="stylesheet" href="./admin-preview.css?v=6">
+  <link rel="stylesheet" href="./styles.css?v=16">
+  <link rel="stylesheet" href="./admin.css?v=16">
+  <link rel="stylesheet" href="./admin-preview.css?v=16">
 </head>
 <body class="admin-page">
   <div class="arcade-world" aria-hidden="true"><div class="stars"></div><div class="orb"></div><div class="mountains"></div><div class="grid-floor"></div></div>
@@ -56,7 +56,7 @@
           <p id="calendar-message" class="admin-message" role="status"></p>
         </section>
         <div class="admin-sidebar-note"><span aria-hidden="true">✦</span><p>Every new puzzle starts at <strong>midnight Central.</strong> Nothing scheduled? On weekends, players see “Closed for the weekend” and a reminder to come back Monday. On weekdays, they see a message to check back or contact Devin.</p></div>
-        <div class="admin-sidebar-note"><span aria-hidden="true">▧</span><p>Five guesses. Five square crops. Every wrong guess reveals a wider view. The full portrait appears when the game ends.</p></div>
+        <div class="admin-sidebar-note"><span aria-hidden="true">▧</span><p>Five guesses. Lookbook classmates start with fun facts, then three photo crops. Other classmates use five photo crops. Every puzzle ends with the full portrait.</p></div>
       </aside>
       <section class="admin-editor" aria-label="Daily puzzle editor">
         <div class="editor-heading"><div><p class="admin-eyebrow">BUILD A DAILY CHALLENGE</p><h1 id="selected-date-title"></h1></div><span id="puzzle-status" class="admin-status">NOT SET</span></div>
@@ -81,9 +81,12 @@
             <ul id="answer-options" class="admin-name-options" role="listbox" hidden></ul>
           </div>
           <p class="admin-answer-status" id="answer-status">Choose a name to set the answer.</p>
+          <p class="lookbook-legend">* Lookbook clues: 1 fact, then 3 facts, then 3 photo crops.</p>
+          <p class="admin-muted clue-format" id="clue-format">Choose a name to see the clue format.</p>
+          <section id="lookbook-facts" class="lookbook-facts" aria-labelledby="lookbook-heading" hidden><h3 id="lookbook-heading">Lookbook fun facts</h3><p>The first fact appears on guess 1. All three appear on guess 2.</p><ol id="lookbook-fact-list"></ol></section>
         </section>
         <section class="admin-panel crop-panel">
-          <div class="admin-section-title"><span class="step-number">03</span><div><h2>Frame the clues</h2><p>Drag the square. Zoom out a little more each time.</p></div></div>
+          <div class="admin-section-title"><span class="step-number">03</span><div><h2>Frame the clues</h2><p id="crop-description">Drag the square. Zoom out a little more each time.</p></div></div>
           <div id="crop-empty" class="crop-empty"><span aria-hidden="true">⌗</span><p>Choose a portrait to begin.</p></div>
           <div id="crop-workspace" hidden>
             <div class="crop-stage-top"><strong id="stage-title">CROP 1 OF 5</strong><span class="admin-muted">Drag to reposition</span></div>
@@ -103,6 +106,6 @@
     </section>
   </main>
   <script src="./config.js"></script>
-  <script type="module" src="./admin.js?v=6"></script>
+  <script type="module" src="./admin.js?v=16"></script>
 </body>
 </html>

@@ -18,6 +18,8 @@ async function fixture() {
   await writeFile(join(root, 'private/portraits/unselected.jpg'), 'not in manifest');
   await writeFile(join(root, 'server/photos.json'), JSON.stringify([{ id: 'group', cover: '/_portraits/photo.jpg', photos: [{ id: 'photo', path: '/_portraits/photo.jpg', width: 424, height: 641 }] }]));
   await writeFile(join(root, 'server/roster.json'), JSON.stringify([{ id: 'private-name', name: 'Private Name', table: '31' }]));
+  await writeFile(join(root, 'server/lookbook.json'), JSON.stringify([{id:'private-name', name:'Private Name', sourceName:'Private Name', page:1, facts:['A private fact.', 'Another private fact.', 'A third private fact.']}]));
+  await writeFile(join(root, 'public/lookbook.json'), 'PRIVATE_LOOKBOOK_FACTS');
   await exportClassmates(root);
   return root;
 }
@@ -37,14 +39,14 @@ test('build keeps tables, private source, and portraits out of Pages; Worker get
   t.after(() => rm(root, { recursive: true, force: true }));
   await buildSite({ root, apiBase: 'https://example.workers.dev/' });
   const publicFiles = await files(join(root, 'dist'));
-  assert(!publicFiles.some(name => /portraits|roster|secret/.test(name)));
+  assert(!publicFiles.some(name => /portraits|roster|secret|lookbook/.test(name)));
   assert(publicFiles.includes('assets/m2ordle.svg'));
   assert.deepEqual(parseClassmates(await readFile(join(root, 'dist/classmates.js'), 'utf8')), [{id:'private-name', name:'Private Name'}]);
   assert.equal(await readFile(join(root, 'dist/config.js'), 'utf8'), 'window.M2ORDLE_CONFIG = {"apiBase":"https://example.workers.dev"};\n');
   const workerFiles = await files(join(root, 'dist-worker'));
   assert(workerFiles.includes('_portraits/photo.jpg'));
   assert(!workerFiles.includes('_portraits/unselected.jpg'));
-  assert(!workerFiles.some(name => /roster|secret/.test(name)));
+  assert(!workerFiles.some(name => /roster|secret|lookbook/.test(name)));
   assert.equal(await readFile(join(root, 'dist-worker/classmates.js'), 'utf8'), await readFile(join(root, 'dist/classmates.js'), 'utf8'));
   assert.equal(await readFile(join(root, 'dist-worker/config.js'), 'utf8'), 'window.M2ORDLE_CONFIG = {"apiBase":""};\n');
 });
@@ -59,6 +61,19 @@ test('static-only build works without private data or server manifests', async t
   await access(join(root, 'dist/index.html'));
   assert.deepEqual(parseClassmates(await readFile(join(root, 'dist/classmates.js'), 'utf8')), [{id:'private-name', name:'Private Name'}]);
   await assert.rejects(access(join(root, 'dist-worker')));
+});
+
+test('full builds require a valid lookbook import tied to unique roster names', async t => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const filename = join(root, 'server/lookbook.json');
+  const [entry] = JSON.parse(await readFile(filename, 'utf8'));
+  for (const bad of [[{...entry, facts:['only one']}], [{...entry, id:'not-on-roster'}], [{...entry, name:'Different Name'}], [entry,entry]]) {
+    await writeFile(filename, JSON.stringify(bad));
+    await assert.rejects(buildSite({root}), /lookbook|matched classmate/i);
+  }
+  await rm(filename);
+  await assert.rejects(buildSite({root}), /ENOENT/);
 });
 
 test('public name export drops private fields and builds reject stale or unsafe bundles', async t => {

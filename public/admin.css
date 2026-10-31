@@ -163,3 +163,13 @@
   .copy-panel form{grid-template-columns:1fr;gap:13px}
   .copy-panel button{justify-self:stretch;font-size:14px}
 }
+
+/* Lookbook clues are available only inside the owner editor. */
+.lookbook-legend{color:var(--lime);font-size:14px;line-height:1.6;margin:12px 0}
+.clue-format{font-size:14px;line-height:1.6;margin:10px 0 0}
+.lookbook-facts{margin-top:18px;padding:18px;border:1px solid var(--edge);background:#171024}
+.lookbook-facts h3{font-size:16px;color:var(--lime);margin:0 0 8px}
+.lookbook-facts p{font-size:14px;color:var(--violet);margin:0 0 14px;line-height:1.6}
+.lookbook-facts ol{padding-left:23px;margin:0;font-size:16px;line-height:1.65;overflow-wrap:anywhere}
+.lookbook-facts li+li{margin-top:12px}
+@media(max-width:600px){.lookbook-facts{padding:14px}.crop-stage-top strong{font-size:12px;line-height:1.5}.lookbook-legend,.clue-format{font-size:14px}}

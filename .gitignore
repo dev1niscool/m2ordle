@@ -9,6 +9,7 @@ M2_MOGGER_AI_HANDOFF.md
 private/
 server/roster.json
 server/photos.json
+server/lookbook.json
 tmp/
 .DS_Store
 artifacts/

@@ -20,8 +20,8 @@ export function score(status, guesses) { return status === 'won' ? MAX_GUESSES +
 export function publicGuesses(guesses, people) {
   return guesses.map(g => ({personId: g.personId, name: people.get(g.personId)?.name || 'Classmate', correct: g.correct}));
 }
-export function validateCrops(crops, photo) {
-  if (!Array.isArray(crops) || crops.length !== MAX_GUESSES) throw new Error('Choose all five crops.');
+export function validateCrops(crops, photo, count = MAX_GUESSES) {
+  if (![3, MAX_GUESSES].includes(count) || !Array.isArray(crops) || crops.length !== count) throw new Error(count === 3 ? 'Choose all three photo crops.' : 'Choose all five crops.');
   const ratio = photo.width / photo.height;
   if (!(ratio > 0 && Number.isFinite(ratio))) throw new Error('This portrait has invalid dimensions.');
   let previous = 0;

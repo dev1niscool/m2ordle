@@ -1,5 +1,7 @@
 import roster from './roster.json' with {type: 'json'};
 import photos from './photos.json' with {type: 'json'};
+import lookbook from './lookbook.json' with {type: 'json'};
+import {lookbookById, validateFacts} from './lookbook.js';
 import {MAX_GUESSES, centralDate, nextCentralMidnight, validDate, dayDistance, score, publicGuesses, validateCrops, validateJpeg, calculateStats} from './core.js';
 
 const json = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}});
@@ -52,10 +54,11 @@ export class M2ordle {
     this.ctx = ctx; this.env = env; this.sql = ctx.storage.sql;
     this.people = new Map(roster.map(person => [person.id, person]));
     this.photos = new Map(photos.flatMap(group => group.photos.map(photo => [photo.id, photo])));
+    this.lookbook = lookbookById(lookbook, roster);
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, created INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS puzzles (date TEXT PRIMARY KEY, person_id TEXT NOT NULL, photo_id TEXT NOT NULL, crops TEXT NOT NULL, published INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS puzzles (date TEXT PRIMARY KEY, person_id TEXT NOT NULL, photo_id TEXT NOT NULL, crops TEXT NOT NULL, published INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL, facts TEXT NOT NULL DEFAULT '[]');
       CREATE TABLE IF NOT EXISTS images (date TEXT NOT NULL, stage TEXT NOT NULL, jpeg TEXT NOT NULL, PRIMARY KEY (date, stage));
       CREATE TABLE IF NOT EXISTS games (session TEXT NOT NULL, date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'playing', guesses TEXT NOT NULL DEFAULT '[]', created INTEGER NOT NULL, completed INTEGER, PRIMARY KEY (session, date));
       CREATE TABLE IF NOT EXISTS guess_requests (session TEXT NOT NULL, request_id TEXT NOT NULL, date TEXT NOT NULL, person_id TEXT NOT NULL, PRIMARY KEY (session, request_id));
@@ -64,6 +67,7 @@ export class M2ordle {
       CREATE INDEX IF NOT EXISTS games_date ON games(date, status);
       CREATE INDEX IF NOT EXISTS claims_person ON claims(person_id);
     `);
+    if (!this.all('PRAGMA table_info(puzzles)').some(column => column.name === 'facts')) this.sql.exec("ALTER TABLE puzzles ADD COLUMN facts TEXT NOT NULL DEFAULT '[]'");
   }
   one(query, ...args) { return this.sql.exec(query, ...args).toArray()[0]; }
   all(query, ...args) { return this.sql.exec(query, ...args).toArray(); }
@@ -117,10 +121,12 @@ export class M2ordle {
     const guesses = JSON.parse(row.guesses), completed = row.status !== 'playing';
     const claim = this.one('SELECT person_id FROM claims WHERE session=? AND date=?', token, date);
     const epoch = this.one("SELECT value FROM settings WHERE key='epoch'").value;
-    const stage = completed ? 'reveal' : String(guesses.length);
+    const facts = JSON.parse(puzzle.facts), factPhase = !completed && facts.length === 3 && guesses.length < 2;
+    const stage = completed ? 'reveal' : String(guesses.length - (facts.length === 3 ? 2 : 0));
     return {
       available: true, date, number: dayDistance(epoch, date) + 1, nextReset, maxGuesses: MAX_GUESSES,
-      status: row.status, guesses: publicGuesses(guesses, this.people), image: `/api/image?date=${date}&stage=${stage}`,
+      status: row.status, guesses: publicGuesses(guesses, this.people), image: factPhase ? null : `/api/image?date=${date}&stage=${stage}`,
+      clue: factPhase ? {type: 'facts', facts: facts.slice(0, guesses.length === 0 ? 1 : 3)} : {type: 'photo'},
       ...(completed ? {answer: {id: puzzle.person_id, name: this.people.get(puzzle.person_id).name}} : {}),
       points: score(row.status, guesses.length), ...(claim ? {claimed: {name: this.people.get(claim.person_id).name}} : {}),
       shareUrl: this.env.SHARE_URL || 'https://dev1niscool.github.io/m2ordle'
@@ -216,10 +222,13 @@ export class M2ordle {
     const photo = this.photos.get(body.photoId);
     if (!photo) fail('Choose an available portrait.');
     if (typeof body.published !== 'boolean') fail('Choose whether this puzzle is published.');
-    let crops, images, reveal;
+    if (body.useLookbook !== undefined && typeof body.useLookbook !== 'boolean') fail('Choose a valid clue format.');
+    let crops, images, reveal, facts;
     try {
-      crops = validateCrops(body.crops, photo);
-      if (!Array.isArray(body.images) || body.images.length !== MAX_GUESSES) throw new Error('Create all five crop images.');
+      facts = body.useLookbook ? validateFacts(this.lookbook.get(body.personId)?.facts) : [];
+      const cropCount = facts.length ? 3 : MAX_GUESSES;
+      crops = validateCrops(body.crops, photo, cropCount);
+      if (!Array.isArray(body.images) || body.images.length !== cropCount) throw new Error(facts.length ? 'Create all three photo crop images.' : 'Create all five crop images.');
       images = body.images.map(validateJpeg);
       reveal = validateJpeg(body.reveal);
     } catch (error) { fail(error.message); }
@@ -230,11 +239,11 @@ export class M2ordle {
         if (epoch && this.one('SELECT 1 AS found FROM games LIMIT 1')) fail('Choose a date on or after the first M2ordle.', 409);
         this.sql.exec("INSERT INTO settings(key,value) VALUES ('epoch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", body.date);
       }
-      this.sql.exec('INSERT INTO puzzles(date,person_id,photo_id,crops,published,updated) VALUES (?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET person_id=excluded.person_id,photo_id=excluded.photo_id,crops=excluded.crops,published=excluded.published,updated=excluded.updated', body.date, body.personId, body.photoId, JSON.stringify(crops), Number(body.published), this.now());
+      this.sql.exec('INSERT INTO puzzles(date,person_id,photo_id,crops,published,updated,facts) VALUES (?,?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET person_id=excluded.person_id,photo_id=excluded.photo_id,crops=excluded.crops,published=excluded.published,updated=excluded.updated,facts=excluded.facts', body.date, body.personId, body.photoId, JSON.stringify(crops), Number(body.published), this.now(), JSON.stringify(facts));
       this.sql.exec('DELETE FROM images WHERE date=?', body.date);
-      for (let i = 0; i < MAX_GUESSES; i++) this.sql.exec('INSERT INTO images(date,stage,jpeg) VALUES (?,?,?)', body.date, String(i), images[i]);
+      for (let i = 0; i < images.length; i++) this.sql.exec('INSERT INTO images(date,stage,jpeg) VALUES (?,?,?)', body.date, String(i), images[i]);
       this.sql.exec('INSERT INTO images(date,stage,jpeg) VALUES (?,?,?)', body.date, 'reveal', reveal);
-      return {saved: true, puzzle: {date: body.date, personId: body.personId, photoId: body.photoId, crops, published: body.published}};
+      return {saved: true, puzzle: {date: body.date, personId: body.personId, photoId: body.photoId, crops, facts, useLookbook: facts.length === 3, published: body.published}};
     });
   }
   adminOverview(date) {
@@ -277,16 +286,18 @@ export class M2ordle {
       const photo = this.photos.get(source.photo_id);
       if (!photo || !this.people.has(source.person_id)) fail('The source portrait or classmate is unavailable.', 409);
       const images = this.all('SELECT stage,jpeg FROM images WHERE date=?', body.sourceDate);
-      const stages = new Set([...Array.from({length: MAX_GUESSES}, (_, index) => String(index)), 'reveal']);
-      let crops;
+      let crops, facts;
       try {
-        crops = validateCrops(JSON.parse(source.crops), photo);
+        facts = validateFacts(JSON.parse(source.facts), true);
+        const cropCount = facts.length ? 3 : MAX_GUESSES;
+        const stages = new Set([...Array.from({length: cropCount}, (_, index) => String(index)), 'reveal']);
+        crops = validateCrops(JSON.parse(source.crops), photo, cropCount);
         if (images.length !== stages.size || images.some(image => !stages.has(image.stage))) throw new Error('Missing source images.');
         for (const image of images) validateJpeg('data:image/jpeg;base64,' + image.jpeg);
-      } catch { fail('The saved puzzle is incomplete. Save all five crops and the reveal before copying.', 409); }
-      this.sql.exec('INSERT INTO puzzles(date,person_id,photo_id,crops,published,updated) VALUES (?,?,?,?,0,?)', body.targetDate, source.person_id, source.photo_id, JSON.stringify(crops), now);
+      } catch { fail('The saved puzzle is incomplete. Save all clues and the reveal before copying.', 409); }
+      this.sql.exec('INSERT INTO puzzles(date,person_id,photo_id,crops,published,updated,facts) VALUES (?,?,?,?,0,?,?)', body.targetDate, source.person_id, source.photo_id, JSON.stringify(crops), now, JSON.stringify(facts));
       for (const image of images) this.sql.exec('INSERT INTO images(date,stage,jpeg) VALUES (?,?,?)', body.targetDate, image.stage, image.jpeg);
-      return {saved: true, puzzle: {date: body.targetDate, personId: source.person_id, photoId: source.photo_id, crops, published: false, locked: false}};
+      return {saved: true, puzzle: {date: body.targetDate, personId: source.person_id, photoId: source.photo_id, crops, facts, useLookbook: facts.length === 3, published: false, locked: false}};
     });
   }
   image(token, url) {
@@ -294,8 +305,11 @@ export class M2ordle {
     if (!validDate(date)) fail('Invalid puzzle date.');
     const game = this.gameRow(token, date);
     if (!game) fail('Start this puzzle before viewing its image.', 403);
+    const puzzle = this.puzzle(date);
+    if (!puzzle) fail('This puzzle is unavailable.', 404);
     const count = JSON.parse(game.guesses).length, completed = game.status !== 'playing';
-    const allowed = stage === 'reveal' ? completed : /^[0-4]$/.test(stage || '') && Number(stage) <= (completed ? count - 1 : count);
+    const factGuesses = JSON.parse(puzzle.facts).length === 3 ? 2 : 0;
+    const allowed = stage === 'reveal' ? completed : /^[0-4]$/.test(stage || '') && Number(stage) < MAX_GUESSES - factGuesses && Number(stage) <= (completed ? count - 1 : count) - factGuesses;
     if (!allowed) fail('This image has not been unlocked yet.', 403);
     const row = this.one('SELECT jpeg FROM images WHERE date=? AND stage=?', date, stage);
     if (!row) fail('This image is unavailable.', 404);
@@ -308,6 +322,7 @@ export class M2ordle {
       if (path.startsWith('/api/admin/')) {
         await this.admin(request);
         if (method === 'GET' && path === '/api/admin/auth') return json({ok: true});
+        if (method === 'GET' && path === '/api/admin/roster') return json({people: roster.map(({id, name}) => ({id, name, lookbookFacts: this.lookbook.get(id)?.facts || []}))});
         if (method === 'GET' && path === '/api/admin/photos') return json({groups: photos});
         if (method === 'GET' && path === '/api/admin/overview') return json(this.adminOverview(url.searchParams.get('date')));
         if (method === 'GET' && path === '/api/admin/calendar') {
@@ -319,7 +334,7 @@ export class M2ordle {
           const date = url.searchParams.get('date');
           if (!validDate(date)) fail('Choose a valid date.');
           const row = this.one('SELECT * FROM puzzles WHERE date=?', date);
-          return json({puzzle: row ? {date: row.date, personId: row.person_id, photoId: row.photo_id, crops: JSON.parse(row.crops), published: Boolean(row.published), locked: Boolean(this.one('SELECT 1 AS found FROM games WHERE date=? LIMIT 1', date))} : null});
+          return json({puzzle: row ? {date: row.date, personId: row.person_id, photoId: row.photo_id, crops: JSON.parse(row.crops), facts: JSON.parse(row.facts), useLookbook: JSON.parse(row.facts).length === 3, published: Boolean(row.published), locked: Boolean(this.one('SELECT 1 AS found FROM games WHERE date=? LIMIT 1', date))} : null});
         }
         if (method === 'POST' && path === '/api/admin/puzzle') return json(this.savePuzzle(await this.body(request)));
         if (method === 'POST' && path === '/api/admin/copy') return json(this.copyPuzzle(await this.body(request)));

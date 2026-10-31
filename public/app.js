@@ -88,17 +88,24 @@ async function renderGame() {
     app.querySelector('p').textContent=game.message||'Check again, or contact Devin to update today’s M2ordle.';
     app.querySelector('[data-retry]').onclick=start;app.querySelector('[data-home]').onclick=home;return;
   }
-  const finished=game.status!=='playing';
-  imageLoading=true;
-  app.innerHTML=`<section class="game"><header class="game-header"><button class="icon-button" data-home aria-label="Back to home">${icon('back')}</button><img class="mini-logo" src="./assets/m2ordle.svg?v=13" alt="M2ordle"><button class="icon-button" data-help aria-label="How to play">${icon('help')}</button></header><div class="puzzle-label"><span data-number></span><span>DAILY CLASS PORTRAIT</span></div><div class="photo-frame loading"><img alt="${finished?'Today’s revealed class portrait':'A cropped detail of today’s classmate'}"></div><div class="play-area"></div><p class="feedback" role="status"></p><ol class="guess-history" aria-label="Your guesses"></ol></section>`;
+  const finished=game.status!=='playing',factsClue=!finished&&game.clue?.type==='facts';
+  imageLoading=!factsClue;
+  app.innerHTML=`<section class="game"><header class="game-header"><button class="icon-button" data-home aria-label="Back to home">${icon('back')}</button><img class="mini-logo" src="./assets/m2ordle.svg?v=13" alt="M2ordle"><button class="icon-button" data-help aria-label="How to play">${icon('help')}</button></header><div class="puzzle-label"><span data-number></span><span>DAILY CLASSMATE</span></div><div class="photo-frame ${factsClue?'fact-frame':'loading'}">${factsClue?'<section class="fact-card" aria-label="Lookbook clues"><p class="fact-kicker"></p><ol class="fact-list"></ol></section>':`<img alt="${finished?'Today’s revealed class portrait':'A cropped detail of today’s classmate'}">`}</div><div class="play-area"></div><p class="feedback" role="status"></p><ol class="guess-history" aria-label="Your guesses"></ol></section>`;
   app.querySelector('[data-home]').onclick=home;app.querySelector('[data-help]').onclick=help;app.querySelector('[data-number]').textContent=`M2ORDLE #${game.number}`;
+  if(factsClue){
+    const facts=game.clue.facts,card=app.querySelector('.fact-card');
+    card.classList.toggle('single',facts.length===1);
+    card.querySelector('.fact-kicker').textContent=facts.length===1?'LOOKBOOK · ONE FUN FACT':'LOOKBOOK · THREE FUN FACTS';
+    for(const fact of facts){const item=document.createElement('li');item.textContent=fact;card.querySelector('.fact-list').append(item);}
+  }
   const area=app.querySelector('.play-area');
   if(finished){
     const label=document.createElement('h1');label.className='finished-label';label.textContent=game.answer.name;
     const sub=document.createElement('p');sub.className='finished-sub';sub.textContent=game.status==='won'?`You found them in ${game.guesses.length}/5. +${game.points} ${game.points===1?'point':'points'}.`:'Five guesses down. A new classmate tomorrow.';
     const button=document.createElement('button');button.className='pixel-button primary wide';button.textContent='VIEW RESULTS';button.onclick=results;area.append(label,sub,button);
   }else{
-    area.innerHTML='<div class="photo-caption"><div><h1>Who’s in the frame?</h1><p data-attempt></p></div><div class="guess-progress" aria-label="Guess progress"></div></div><form class="guess-form"><div data-picker></div><button type="submit" class="pixel-button primary" disabled>GUESS</button></form><p class="form-hint">Choose a name from the list. Each miss reveals a little more.</p>';
+    area.innerHTML='<div class="photo-caption"><div><h1></h1><p data-attempt></p></div><div class="guess-progress" aria-label="Guess progress"></div></div><form class="guess-form"><div data-picker></div><button type="submit" class="pixel-button primary" disabled>GUESS</button></form><p class="form-hint">Choose a name from the list. Each miss reveals a little more.</p>';
+    area.querySelector('h1').textContent=factsClue?'Who’s this classmate?':'Who’s in the frame?';
     area.querySelector('[data-attempt]').textContent=`Guess ${game.guesses.length+1} of 5`;
     const progress=area.querySelector('.guess-progress');
     for(let i=0;i<5;i++){const block=document.createElement('span');block.className=`guess-square ${i<game.guesses.length?'wrong':i===game.guesses.length?'current':''}`;progress.append(block);}
@@ -110,6 +117,7 @@ async function renderGame() {
     const li=document.createElement('li');li.className=guess.correct?'correct':'';
     const text=document.createElement('span'),num=document.createElement('span'),mark=document.createElement('span');num.className='guess-no';num.textContent=String(i+1).padStart(2,'0');text.append(num,document.createTextNode(guess.name));mark.className='outcome';mark.textContent=guess.correct?'✓':'×';mark.setAttribute('aria-label',guess.correct?'Correct':'Incorrect');li.append(text,mark);app.querySelector('.guess-history').append(li);
   }
+  if(factsClue)return;
   const controller=new AbortController();imageController=controller;
   const timeout=setTimeout(()=>controller.abort(),20000);
   try {
@@ -129,7 +137,7 @@ async function renderGame() {
   }
 }
 async function submitGuess(person) {
-  const currentNavigation=navigation,prior=game.guesses.length;
+  const currentNavigation=navigation,prior=game.guesses.length,previousWasFacts=game.clue?.type==='facts';
   const submittedDate=game.date,requestId=crypto.randomUUID();
   setBusy(true);const button=app.querySelector('.guess-form button');button.textContent='…';
   try {
@@ -138,7 +146,8 @@ async function submitGuess(person) {
     game=next;await renderGame();
     if(currentNavigation!==navigation||screen!=='game')return;
     if(game.status!=='playing')await results();
-    else if(imageUrl){app.querySelector('.feedback').textContent='Not quite. New angle, a little further out.';}
+    else if(game.clue?.type==='facts'){app.querySelector('.feedback').textContent='Not quite. Here are all three fun facts.';}
+    else if(imageUrl){app.querySelector('.feedback').textContent=previousWasFacts?'Not quite. Here’s your first photo clue.':'Not quite. New angle, a little further out.';}
   }catch(error){
     if(currentNavigation!==navigation||screen!=='game')return;
     // Reconcile with the server before accepting another guess: the original request may have succeeded.
@@ -148,7 +157,7 @@ async function submitGuess(person) {
       game=next;await renderGame();
       if(currentNavigation!==navigation||screen!=='game'||!game.available)return;
       if(game.status!=='playing')await results();
-      else{const feedback=app.querySelector('.feedback');if(feedback&&imageUrl)feedback.textContent=game.date!==submittedDate?'A new M2ordle has started.':game.guesses.length>prior?'Your guess was saved. Try the new crop.':error.message;}
+      else{const feedback=app.querySelector('.feedback');if(feedback&&(imageUrl||game.clue?.type==='facts'))feedback.textContent=game.date!==submittedDate?'A new M2ordle has started.':game.guesses.length>prior?'Your guess was saved. Try the new clue.':error.message;}
     }catch{if(currentNavigation===navigation&&screen==='game')errorScreen('We couldn’t confirm that guess. Reconnect to restore your saved progress.');}
   }finally{
     if(currentNavigation===navigation){setBusy(false);if(screen==='game')guessPicker?.input.focus();}
@@ -166,7 +175,7 @@ function modal(title){
 }
 function help(){
   const body=modal('HOW TO PLAY');
-  body.innerHTML='<ol class="help-list"><li>One classmate, hidden in a close-up portrait. You have <strong>five guesses</strong>.</li><li>Start typing a name and select a classmate from the list.</li><li>A wrong guess zooms out and shifts to a new part of the photo.</li><li>Solve the frame, share your squares, and add your points to the class leaderboard.</li></ol><p class="help-note">A new M2ordle arrives at midnight Central Time.<br><br>1st guess = 5 points · 2nd = 4 · 3rd = 3 · 4th = 2 · 5th = 1. An unsolved puzzle earns 0 points.</p><button class="pixel-button primary wide">GOT IT</button>';
+  body.innerHTML='<ol class="help-list"><li>Guess the classmate in <strong>five guesses</strong>.</li><li>Lookbook puzzles start with one fun fact, then all three facts after a miss. Guesses 3–5 reveal three photo crops.</li><li>Other puzzles start with a close-up portrait. Each wrong guess reveals a wider crop.</li><li>Start typing a name and choose a classmate from the list. Share your squares and add your points to the class leaderboard when you finish.</li></ol><p class="help-note">A new M2ordle arrives at midnight Central Time. Unpublished weekends preserve your streak.<br><br>1st guess = 5 points · 2nd = 4 · 3rd = 3 · 4th = 2 · 5th = 1. An unsolved puzzle earns 0 points.</p><button class="pixel-button primary wide">GOT IT</button>';
   body.querySelector('button').onclick=closeModal;
 }
 function statsMarkup(body,stats,distributionTarget=body){

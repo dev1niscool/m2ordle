@@ -11,8 +11,12 @@ const JPEG = 'data:image/jpeg;base64,' + Buffer.from([255, 216, ...Array(24).fil
 const TODAY = '2026-10-29';
 const ANSWER = roster[0];
 const PHOTO = photos[0].photos[0];
+const FACTS = ['I collect postcards.', 'I can juggle three oranges.', 'I learned to bake bread.'];
 function puzzle(date = TODAY, extra = {}) {
   return {date, personId: ANSWER.id, photoId: PHOTO.id, crops: [.12, .25, .45, .7, 1].map(size => ({x: 0, y: 0, size})), images: Array(5).fill(JPEG), reveal: JPEG, published: true, ...extra};
+}
+function factPuzzle(date = TODAY, extra = {}) {
+  return puzzle(date, {useLookbook: true, crops: [.2, .5, 1].map(size => ({x: 0, y: 0, size})), images: Array(3).fill(JPEG), ...extra});
 }
 function fixture(t, env = {}) {
   const db = new DatabaseSync(':memory:');
@@ -30,8 +34,8 @@ function fixture(t, env = {}) {
   }}};
   const config = {ADMIN_PASSWORD: ADMIN, ...env};
   let now = Date.parse(TODAY + 'T17:00:00Z');
-  let room;
-  function restart() { room = new M2ordle(ctx, config); room.now = () => now; }
+  let room, fixtureLookbook = null;
+  function restart() { room = new M2ordle(ctx, config); room.now = () => now; if (fixtureLookbook) room.lookbook = new Map(fixtureLookbook); }
   restart();
   async function raw(path, body, token, ip = 'fixture') {
     return room.fetch(new Request('https://m2ordle.test' + path, {method: body === undefined ? 'GET' : 'POST', headers: {'Content-Type': 'application/json', 'CF-Connecting-IP': ip, ...(token ? {Authorization: 'Bearer ' + token} : {})}, ...(body === undefined ? {} : {body: JSON.stringify(body)})}));
@@ -49,7 +53,7 @@ function fixture(t, env = {}) {
   }
   let request = 0;
   async function guess(token, personId = ANSWER.id, extra = {}) { return call('guess', {personId, requestId: 'fixture-' + ++request, ...extra}, token); }
-  return {db, ctx, config, raw, call, publish, start, guess, restart, setTime: value => {now = Date.parse(value);}, get room() {return room;}};
+  return {db, ctx, config, raw, call, publish, start, guess, restart, setTime: value => {now = Date.parse(value);}, setLookbook: entries => {fixtureLookbook = new Map(entries); room.lookbook = new Map(fixtureLookbook);}, get room() {return room;}};
 }
 
 test('Central dates and midnight resets handle both DST transitions', () => {
@@ -147,6 +151,130 @@ test('admin validates dates, crop bounds, progression, portraits and JPEG payloa
   assert.equal((await f.call('admin/calendar?month=2026-99', undefined, ADMIN)).code, 400);
 });
 
+test('lookbook facts are available only in the admin roster and saved by the selected clue format', async t => {
+  const f = fixture(t); f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  assert.equal((await f.call('admin/roster')).code, 401);
+  const adminRoster = await f.call('admin/roster', undefined, ADMIN);
+  assert.deepEqual(adminRoster.people.find(person => person.id === ANSWER.id), {id: ANSWER.id, name: ANSWER.name, lookbookFacts: FACTS});
+  assert.deepEqual(adminRoster.people.find(person => person.id === roster[1].id).lookbookFacts, []);
+  assert.ok(adminRoster.people.every(person => !('table' in person)));
+  const publicRoster = await f.call('roster');
+  assert.ok(publicRoster.people.every(person => Object.keys(person).sort().join(',') === 'id,name'));
+  for (const body of [
+    factPuzzle(TODAY, {personId: roster[1].id}), factPuzzle(TODAY, {useLookbook: 'true'}),
+    factPuzzle(TODAY, {crops: puzzle().crops}), factPuzzle(TODAY, {images: Array(5).fill(JPEG)}),
+    factPuzzle(TODAY, {useLookbook: false}),
+  ]) assert.equal((await f.call('admin/puzzle', body, ADMIN)).code, 400);
+  const saved = await f.call('admin/puzzle', factPuzzle(TODAY, {facts: ['Injected', 'facts', 'ignored']}), ADMIN);
+  assert.equal(saved.code, 200);
+  assert.deepEqual(saved.puzzle.facts, FACTS);
+  assert.equal(saved.puzzle.useLookbook, true);
+  assert.equal(saved.puzzle.crops.length, 3);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM images WHERE date=?').get(TODAY).count, 4);
+  assert.deepEqual((await f.call('admin/puzzle?date=' + TODAY, undefined, ADMIN)).puzzle.facts, FACTS);
+  const normal = await f.publish('2026-10-30');
+  assert.deepEqual(normal.puzzle.facts, []);
+  assert.equal(normal.puzzle.useLookbook, false, 'old clients and photo-only saves stay on five photo clues');
+});
+
+test('lookbook games unlock one fact, three facts, then three photos without premature image access', async t => {
+  const f = fixture(t); f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  assert.equal((await f.call('admin/puzzle', factPuzzle(), ADMIN)).code, 200);
+  const {token, game} = await f.start();
+  assert.deepEqual(game.clue, {type: 'facts', facts: FACTS.slice(0, 1)});
+  assert.equal(game.image, null);
+  assert.equal(game.maxGuesses, 5);
+  assert.equal('answer' in game, false);
+  assert.equal(JSON.stringify(game).includes(FACTS[1]), false);
+  assert.equal(JSON.stringify(game).includes(FACTS[2]), false);
+  assert.equal('personId' in game.clue, false);
+  for (const stage of ['0', '1', '2', '3', '4', 'reveal']) assert.equal((await f.raw(`/api/image?date=${TODAY}&stage=${stage}`, undefined, token)).status, 403);
+  let next = await f.guess(token, roster[1].id);
+  assert.deepEqual(next.clue, {type: 'facts', facts: FACTS});
+  assert.equal(next.image, null);
+  assert.equal('answer' in next, false);
+  assert.equal((await f.raw(`/api/image?date=${TODAY}&stage=0`, undefined, token)).status, 403);
+  f.restart();
+  assert.deepEqual(await f.call('game', undefined, token), next);
+  for (let wrong = 2; wrong <= 4; wrong++) {
+    next = await f.guess(token, roster[wrong].id);
+    assert.deepEqual(next.clue, {type: 'photo'});
+    assert.equal(next.image, `/api/image?date=${TODAY}&stage=${wrong - 2}`);
+    assert.equal((await f.raw(next.image, undefined, token)).status, 200);
+    assert.equal((await f.raw(`/api/image?date=${TODAY}&stage=${wrong - 1}`, undefined, token)).status, 403);
+    assert.equal((await f.raw(`/api/image?date=${TODAY}&stage=reveal`, undefined, token)).status, 403);
+    assert.equal('answer' in next, false);
+    assert.equal('facts' in next, false);
+  }
+  const lost = await f.guess(token, roster[5].id);
+  assert.equal(lost.status, 'lost');
+  assert.equal(lost.guesses.length, 5);
+  assert.equal(lost.points, 0);
+  assert.equal(lost.answer.id, ANSWER.id);
+  assert.equal((await f.raw(lost.image, undefined, token)).status, 200);
+  for (const stage of ['0', '1', '2']) assert.equal((await f.raw(`/api/image?date=${TODAY}&stage=${stage}`, undefined, token)).status, 200);
+  for (const stage of ['3', '4']) assert.equal((await f.raw(`/api/image?date=${TODAY}&stage=${stage}`, undefined, token)).status, 403);
+  assert.equal((await f.guess(token)).code, 409);
+});
+
+test('a correct fact-stage guess reveals the answer without unlocking unseen photo clues', async t => {
+  const f = fixture(t); f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  await f.call('admin/puzzle', factPuzzle(), ADMIN);
+  for (const attempts of [1, 2]) {
+    const {token} = await f.start();
+    if (attempts === 2) await f.guess(token, roster[1].id);
+    const won = await f.guess(token);
+    assert.equal(won.status, 'won');
+    assert.equal(won.points, 6 - attempts);
+    assert.equal(won.answer.id, ANSWER.id);
+    assert.deepEqual(won.clue, {type: 'photo'});
+    assert.equal((await f.raw(won.image, undefined, token)).status, 200);
+    for (const stage of ['0', '1', '2', '3', '4']) assert.equal((await f.raw(`/api/image?date=${TODAY}&stage=${stage}`, undefined, token)).status, 403);
+    const stats = await f.call('stats', undefined, token);
+    assert.equal(stats.wins, 1);
+    assert.equal(stats.distribution[attempts - 1], 1);
+  }
+});
+
+test('saved lookbook facts survive library changes, copying, restarts, and played-day locks', async t => {
+  const f = fixture(t); f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  await f.call('admin/puzzle', factPuzzle(), ADMIN);
+  const {token} = await f.start();
+  const saved = f.db.prepare('SELECT * FROM puzzles WHERE date=?').get(TODAY);
+  f.setLookbook([[ANSWER.id, {facts: ['New first', 'New second', 'New third'], page: 3}]]);
+  f.restart();
+  assert.deepEqual((await f.call('game', undefined, token)).clue.facts, [FACTS[0]]);
+  assert.equal((await f.call('admin/puzzle', factPuzzle(), ADMIN)).code, 409);
+  const copy = await f.call('admin/copy', {sourceDate: TODAY, targetDate: '2026-10-30'}, ADMIN);
+  assert.equal(copy.code, 200);
+  assert.deepEqual(copy.puzzle.facts, FACTS);
+  assert.equal(copy.puzzle.crops.length, 3);
+  assert.equal(copy.puzzle.published, false);
+  assert.equal(copy.puzzle.useLookbook, true);
+  assert.deepEqual(f.db.prepare('SELECT stage,jpeg FROM images WHERE date=? ORDER BY stage').all(TODAY), f.db.prepare('SELECT stage,jpeg FROM images WHERE date=? ORDER BY stage').all('2026-10-30'));
+  assert.deepEqual(f.db.prepare('SELECT * FROM puzzles WHERE date=?').get(TODAY), saved);
+  f.db.prepare('DELETE FROM images WHERE date=? AND stage=?').run(TODAY, '1');
+  assert.equal((await f.call('admin/copy', {sourceDate: TODAY, targetDate: '2026-10-31'}, ADMIN)).code, 409);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM puzzles WHERE date=?').get('2026-10-31').count, 0);
+});
+
+test('legacy puzzle migration preserves existing five-photo games and never converts them automatically', async t => {
+  const f = fixture(t); await f.publish();
+  const {token} = await f.start(); const before = await f.guess(token, roster[1].id);
+  const games = f.db.prepare('SELECT * FROM games').all(), images = f.db.prepare('SELECT * FROM images').all();
+  f.db.exec('ALTER TABLE puzzles DROP COLUMN facts');
+  f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  f.restart(); f.restart();
+  assert.deepEqual(await f.call('game', undefined, token), before);
+  assert.deepEqual(f.db.prepare('SELECT * FROM games').all(), games);
+  assert.deepEqual(f.db.prepare('SELECT * FROM images').all(), images);
+  const admin = await f.call('admin/puzzle?date=' + TODAY, undefined, ADMIN);
+  assert.deepEqual(admin.puzzle.facts, []);
+  assert.equal(admin.puzzle.crops.length, 5);
+  assert.equal(admin.puzzle.locked, true);
+  assert.equal((await f.raw(before.image, undefined, token)).status, 200);
+});
+
 test('admin overview requires authentication and reports a Central-time schedule across month boundaries', async t => {
   const f = fixture(t);
   assert.equal((await f.call('admin/overview?date=' + TODAY)).code, 401);
@@ -198,7 +326,7 @@ test('admin copies a played puzzle and every image into an empty draft without c
   const copy = await f.call('admin/copy', {sourceDate: TODAY, targetDate: '2026-10-30', published: true}, ADMIN);
   assert.equal(copy.code, 200);
   assert.equal(copy.saved, true);
-  assert.deepEqual(copy.puzzle, {date: '2026-10-30', personId: ANSWER.id, photoId: PHOTO.id, crops: puzzle().crops, published: false, locked: false});
+  assert.deepEqual(copy.puzzle, {date: '2026-10-30', personId: ANSWER.id, photoId: PHOTO.id, crops: puzzle().crops, facts: [], useLookbook: false, published: false, locked: false});
   assert.deepEqual(f.db.prepare('SELECT stage,jpeg FROM images WHERE date=? ORDER BY stage').all('2026-10-30'), images);
   assert.deepEqual(f.db.prepare('SELECT * FROM puzzles WHERE date=?').get(TODAY), source);
   assert.deepEqual(f.db.prepare('SELECT * FROM games').all(), games);

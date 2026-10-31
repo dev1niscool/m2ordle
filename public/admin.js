@@ -1,15 +1,14 @@
-import { openPuzzlePreview, closePuzzlePreview } from './admin-preview.js';
+import { openPuzzlePreview, closePuzzlePreview } from './admin-preview.js?v=16';
 
 const $ = id => document.getElementById(id);
 const apiBase = String(window.M2ORDLE_CONFIG?.apiBase || '').replace(/\/$/, '');
 const PAGE_SIZE = 12;
-const CROP_COUNT = 5;
 const IDLE_MS = 15 * 60 * 1000;
 const state = {
   password: '', epoch: 0, people: [], groups: [], photos: new Map(), imageCache: new Map(),
   today: centralDate(), day: centralDate(), month: centralDate().slice(0, 7), days: new Map(),
   galleryPage: 0, galleryQuery: '', galleryEpoch: 0, group: null, photo: null, source: null,
-  person: null, stage: 0, crops: [], dirty: false, published: false, busy: false, loading: false, photoLoading: false,
+  person: null, facts: [], stage: 0, crops: [], dirty: false, published: false, busy: false, loading: false, photoLoading: false,
   dayEpoch: 0, photoEpoch: 0, options: [], optionIndex: -1, idleTimer: null,
   calendarEpoch: 0, calendarLoading: false, calendarLoaded: false,
   overviewEpoch: 0, overviewLoading: false, overview: null, hasSaved: false, locked: false, copyDateEdited: false
@@ -73,6 +72,7 @@ function lock(message = '') {
   state.photo = null;
   state.group = null;
   state.person = null;
+  state.facts = [];
   state.crops = [];
   state.people = [];
   state.groups = [];
@@ -100,6 +100,7 @@ function lock(message = '') {
   $('pose-gallery').replaceChildren();
   $('chosen-portrait-thumb').removeAttribute('src');
   $('answer-name').value = '';
+  renderAnswerStatus();
   $('answer-options').replaceChildren();
   $('calendar-days').replaceChildren();
   $('upcoming-days').replaceChildren();
@@ -151,7 +152,7 @@ $('login-form').addEventListener('submit', async event => {
   setMessage('login-message');
   try {
     await api('/api/admin/auth');
-    const [roster, photos] = await Promise.all([api('/api/roster'), api('/api/admin/photos')]);
+    const [roster, photos] = await Promise.all([api('/api/admin/roster'), api('/api/admin/photos')]);
     if (epoch !== state.epoch) return;
     state.people = roster.people || [];
     state.groups = photos.groups || [];
@@ -344,7 +345,7 @@ $('next-gap').addEventListener('click', async () => {
 });
 $('preview-puzzle').addEventListener('click', () => {
   if ($('preview-puzzle').disabled) return;
-  openPuzzlePreview({source: state.source, crops: state.crops, name: state.person?.name || 'Classmate', date: state.day});
+  openPuzzlePreview({source: state.source, crops: state.crops, facts: state.facts, name: state.person?.name || 'Classmate', date: state.day});
 });
 $('copy-date').addEventListener('input', () => { state.copyDateEdited = true; setMessage('copy-message'); updateSaveButtons(); });
 $('copy-puzzle-form').addEventListener('submit', async event => {
@@ -414,6 +415,7 @@ async function selectDay(day, initial = false) {
   state.source = null;
   state.crops = [];
   state.person = null;
+  state.facts = [];
   state.stage = 0;
   drag = null;
   if (state.month !== day.slice(0, 7)) { state.month = day.slice(0, 7); void loadCalendar(); }
@@ -441,7 +443,8 @@ async function selectDay(day, initial = false) {
       state.hasSaved = true;
       state.locked = Boolean(puzzle.locked);
       state.person = state.people.find(person => person.id === puzzle.personId) || null;
-      $('answer-name').value = state.person?.name || '';
+      state.facts = validFacts(puzzle.facts);
+      $('answer-name').value = state.person ? answerLabel(state.person) : '';
       renderAnswerStatus();
       const selected = state.photos.get(puzzle.photoId);
       if (selected) await choosePhoto(selected.group, selected.photo, { crops: puzzle.crops, saved: true });
@@ -487,11 +490,11 @@ function markDirty() {
   updateSaveButtons();
 }
 function updateSaveButtons() {
-  const ready = Boolean(state.source && state.photo && state.person && state.crops.length === CROP_COUNT && !state.locked && !state.busy && !state.loading && !state.photoLoading);
+  const ready = Boolean(state.source && state.photo && state.person && state.crops.length === cropCount() && !state.locked && !state.busy && !state.loading && !state.photoLoading);
   $('save-draft').disabled = !ready;
   $('publish-puzzle').disabled = !ready;
   $('save-draft').textContent = state.busy ? 'Saving…' : 'Save draft';
-  $('preview-puzzle').disabled = !state.source || state.crops.length !== CROP_COUNT || state.busy || state.loading || state.photoLoading;
+  $('preview-puzzle').disabled = !state.source || (state.facts.length > 0 && !state.person) || state.crops.length !== cropCount() || state.busy || state.loading || state.photoLoading;
   $('preview-note').textContent = state.dirty ? 'Preview includes your unsaved edits.' : 'See all five clues and the full reveal.';
   for (const panel of document.querySelectorAll('.setup-panel,.identity-panel,.crop-panel')) panel.inert = state.locked;
   const target = $('copy-date').value;
@@ -570,12 +573,13 @@ async function choosePhoto(group, photo, options = {}) {
     state.photo = photo;
     state.source = loaded.image;
     state.stage = 0;
-    state.crops = options.crops?.length === CROP_COUNT ? options.crops.map(crop => clampCrop({ ...crop })) : defaultCrops();
     if (wasDifferentGroup && !options.saved) {
       state.person = null;
+      state.facts = [];
       $('answer-name').value = '';
       renderAnswerStatus();
     }
+    state.crops = options.crops?.length === cropCount() ? options.crops.map(crop => clampCrop({ ...crop })) : defaultCrops();
     $('chosen-portrait-thumb').src = loaded.url;
     $('chosen-portrait-label').textContent = group.label;
     $('chosen-portrait-detail').textContent = `${group.photos.length} paired ${group.photos.length === 1 ? 'pose' : 'poses'} · Pose ${group.photos.findIndex(p => p.id === photo.id) + 1} selected`;
@@ -615,7 +619,7 @@ function renderPoses() {
   }
 }
 
-function normalize(value) { return value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim(); }
+function normalize(value) { return value.replace(/\*/g, '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim(); }
 function nameOptions(query) {
   const words = normalize(query).split(/\s+/).filter(Boolean);
   if (!words.length) return [];
@@ -631,7 +635,8 @@ function renderOptions() {
   state.optionIndex = -1;
   if (!$('answer-name').value.trim()) { closeOptions(); return; }
   for (const [index, person] of state.options.entries()) {
-    const option = node('li', '', person.name);
+    const option = node('li', '', answerLabel(person));
+    if (validFacts(person.lookbookFacts).length) option.setAttribute('aria-label', `${person.name}, lookbook clues available`);
     option.id = `answer-option-${index}`;
     option.setAttribute('role', 'option');
     option.setAttribute('aria-selected', 'false');
@@ -652,15 +657,49 @@ function closeOptions() {
 function selectAnswer(person) {
   if (state.locked) return;
   state.person = person;
-  $('answer-name').value = person.name;
+  setFacts(person.lookbookFacts);
+  $('answer-name').value = answerLabel(person);
   closeOptions();
   renderAnswerStatus();
   markDirty();
 }
-function renderAnswerStatus() {
-  $('answer-status').textContent = state.person ? `✓ Answer set: ${state.person.name}` : 'Choose a name to set the answer.';
-  $('answer-status').classList.toggle('selected', Boolean(state.person));
+function validFacts(facts) {
+  return Array.isArray(facts) && facts.length === 3 && facts.every(fact => typeof fact === 'string' && fact.trim()) ? facts.slice() : [];
 }
+function answerLabel(person) { return person.name + (validFacts(person.lookbookFacts).length ? ' *' : ''); }
+function cropCount() { return state.facts.length === 3 ? 3 : 5; }
+function guessNumber(index) { return index + (state.facts.length ? 3 : 1); }
+function setFacts(facts) {
+  const previous = state.crops;
+  state.facts = validFacts(facts);
+  const count = cropCount();
+  if (!state.source || !previous.length || previous.length === count) return;
+  state.crops = Array.from({length: count}, (_, index) => {
+    const position = index * (previous.length - 1) / (count - 1);
+    const left = previous[Math.floor(position)], right = previous[Math.ceil(position)], fraction = position % 1;
+    return clampCrop(Object.fromEntries(['x', 'y', 'size'].map(key => [key, left[key] + (right[key] - left[key]) * fraction])));
+  });
+  // Leave room for every later crop, including when switching from three to five.
+  for (let index = 0; index < count; index++) {
+    const min = index ? state.crops[index - 1].size + 0.015 : 0.04;
+    const max = maximumSize() - (count - index - 1) * 0.015;
+    state.crops[index] = clampCrop({...state.crops[index], size: Math.min(max, Math.max(min, state.crops[index].size))});
+  }
+  state.stage = Math.min(state.stage, count - 1);
+  renderStageButtons();
+  renderCrop();
+}
+function renderAnswerStatus() {
+  $('answer-status').textContent = state.person ? `✓ Answer set: ${answerLabel(state.person)}` : 'Choose a name to set the answer.';
+  $('answer-status').classList.toggle('selected', Boolean(state.person));
+  const active = Boolean(state.person && state.facts.length);
+  $('lookbook-facts').hidden = !active;
+  $('lookbook-fact-list').replaceChildren();
+  if (active) for (const fact of state.facts) $('lookbook-fact-list').append(node('li', '', fact));
+  $('clue-format').textContent = !state.person ? 'Choose a name to see the clue format.' : active ? 'Guess 1: first fact · Guess 2: all three facts · Guesses 3–5: photo crops.' : validFacts(state.person.lookbookFacts).length ? `This saved puzzle uses five photo clues.${state.locked ? '' : ' Reselect this name to use the lookbook clues.'}` : 'Five photo clues, followed by the full-photo reveal.';
+  $('crop-description').textContent = active ? 'Set the three square photo clues for guesses 3, 4, and 5.' : 'Drag the square. Zoom out a little more each time.';
+}
+
 $('answer-name').addEventListener('input', () => {
   state.person = null;
   renderAnswerStatus();
@@ -697,7 +736,7 @@ function clampCrop(crop) {
 function defaultCrops() {
   const max = maximumSize();
   const ratio = state.source.naturalWidth / state.source.naturalHeight;
-  return [0.16, 0.28, 0.45, 0.7, 1].map(fraction => {
+  return (cropCount() === 3 ? [0.16, 0.45, 1] : [0.16, 0.28, 0.45, 0.7, 1]).map(fraction => {
     const size = max * fraction;
     return clampCrop({ x: (1 - size) / 2, y: 0.3 - size * ratio / 2, size });
   });
@@ -722,16 +761,18 @@ function drawReveal(canvas) {
 function renderStageButtons() {
   const container = $('crop-stages');
   container.replaceChildren();
-  for (let index = 0; index < CROP_COUNT; index++) {
+  container.style.gridTemplateColumns = `repeat(${cropCount()}, minmax(0, 1fr))`;
+  container.setAttribute('aria-label', `${cropCount()} playable photo crops`);
+  for (let index = 0; index < cropCount(); index++) {
     const button = node('button', 'crop-stage');
     button.type = 'button';
-    button.setAttribute('aria-label', `Edit crop ${index + 1}`);
+    button.setAttribute('aria-label', `Edit photo crop for guess ${guessNumber(index)}`);
     button.setAttribute('aria-pressed', String(index === state.stage));
     const canvas = node('canvas');
     canvas.width = 128;
     canvas.height = 128;
     canvas.id = `stage-preview-${index}`;
-    button.append(canvas, node('span', '', `CROP ${index + 1}`));
+    button.append(canvas, node('span', '', `GUESS ${guessNumber(index)}`));
     button.addEventListener('click', () => { state.stage = index; renderCrop(); });
     container.append(button);
   }
@@ -761,30 +802,30 @@ function renderCrop() {
   const handle = Math.max(5, width / 55);
   for (const [cx, cy] of [[x, y], [x + size, y], [x, y + size], [x + size, y + size]]) context.fillRect(cx - handle / 2, cy - handle / 2, handle, handle);
   drawSquare($('preview-canvas'), crop);
-  for (let index = 0; index < CROP_COUNT; index++) {
+  for (let index = 0; index < cropCount(); index++) {
     drawSquare($(`stage-preview-${index}`), state.crops[index]);
     $('crop-stages').children[index].setAttribute('aria-pressed', String(index === state.stage));
   }
-  $('stage-title').textContent = `CROP ${state.stage + 1} OF 5`;
+  $('stage-title').textContent = `CROP ${state.stage + 1} OF ${cropCount()} · GUESS ${guessNumber(state.stage)}`;
   const min = state.stage === 0 ? 0.04 : state.crops[state.stage - 1].size + 0.015;
-  const max = maximumSize() - (CROP_COUNT - state.stage - 1) * 0.015;
+  const max = maximumSize() - (cropCount() - state.stage - 1) * 0.015;
   $('crop-size').min = min.toFixed(4);
   $('crop-size').max = max.toFixed(4);
   $('crop-size').value = crop.size;
   $('crop-size-value').value = `${Math.round(crop.size / maximumSize() * 100)}%`;
   $('crop-size-hint').textContent = state.stage === 0 ? 'Start tight. Later crops automatically stay wider.' : 'This crop stays wider than the previous clue. Later crops adjust if needed.';
   $('previous-stage').disabled = state.stage === 0;
-  $('next-stage').disabled = state.stage === CROP_COUNT - 1;
+  $('next-stage').disabled = state.stage === cropCount() - 1;
 }
 function setCropSize(value) {
   if (!state.source || state.locked) return;
   const current = state.crops[state.stage];
   const ratio = state.source.naturalWidth / state.source.naturalHeight;
   const min = state.stage === 0 ? 0.04 : state.crops[state.stage - 1].size + 0.015;
-  const max = maximumSize() - (CROP_COUNT - state.stage - 1) * 0.015;
+  const max = maximumSize() - (cropCount() - state.stage - 1) * 0.015;
   const size = Math.min(max, Math.max(min, Number(value)));
   state.crops[state.stage] = clampCrop({ x: current.x + (current.size - size) / 2, y: current.y + (current.size - size) * ratio / 2, size });
-  for (let index = state.stage + 1; index < CROP_COUNT; index++) {
+  for (let index = state.stage + 1; index < cropCount(); index++) {
     const existing = state.crops[index];
     const nextSize = Math.max(existing.size, state.crops[index - 1].size + 0.015);
     state.crops[index] = clampCrop({ x: existing.x + (existing.size - nextSize) / 2, y: existing.y + (existing.size - nextSize) * ratio / 2, size: nextSize });
@@ -794,7 +835,7 @@ function setCropSize(value) {
 }
 $('crop-size').addEventListener('input', event => setCropSize(event.target.value));
 $('previous-stage').addEventListener('click', () => { state.stage = Math.max(0, state.stage - 1); renderCrop(); });
-$('next-stage').addEventListener('click', () => { state.stage = Math.min(CROP_COUNT - 1, state.stage + 1); renderCrop(); });
+$('next-stage').addEventListener('click', () => { state.stage = Math.min(cropCount() - 1, state.stage + 1); renderCrop(); });
 let drag = null;
 function sourcePoint(event) {
   const rect = $('source-canvas').getBoundingClientRect();
@@ -847,7 +888,7 @@ async function savePuzzle(published) {
   const images = state.crops.map(crop => { drawSquare(canvas, crop); return canvas.toDataURL('image/jpeg', 0.85); });
   drawReveal(canvas);
   const reveal = canvas.toDataURL('image/jpeg', 0.85);
-  const body = { date, personId: state.person.id, photoId: state.photo.id, crops: state.crops, images, reveal, published };
+  const body = { date, personId: state.person.id, photoId: state.photo.id, crops: state.crops, images, reveal, published, useLookbook: state.facts.length === 3 };
   state.busy = true;
   document.querySelector('.admin-editor').inert = true;
   document.querySelector('.admin-sidebar').inert = true;
@@ -855,8 +896,9 @@ async function savePuzzle(published) {
   updateSaveButtons();
   setMessage('editor-message', published ? 'Publishing this day…' : 'Saving your draft…', 'info');
   try {
-    await api('/api/admin/puzzle', { method: 'POST', body: JSON.stringify(body) });
+    const saved = await api('/api/admin/puzzle', { method: 'POST', body: JSON.stringify(body) });
     if (epoch !== state.dayEpoch || !state.password) return;
+    if (saved.puzzle) { state.facts = validFacts(saved.puzzle.facts); renderAnswerStatus(); }
     state.published = published;
     state.hasSaved = true;
     state.dirty = false;
