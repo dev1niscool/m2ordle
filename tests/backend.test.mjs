@@ -709,3 +709,285 @@ test('historical best streaks skip only unpublished weekend gaps without adding 
   assert.deepEqual(stats.distribution, [4, 0, 0, 0, 0]);
   assert.equal(calculateStats(rows, '2026-11-04', [], [...dates, '2026-11-01']).maxStreak, 2, 'a missed published Sunday also separates historical streaks');
 });
+
+const STUDY_START = '2026-11-19';
+const STUDY_NOW = '2026-11-19T06:00:00Z';
+function competitionSnapshot(f) {
+  return Object.fromEntries(['settings', 'puzzles', 'images', 'games', 'guess_requests', 'claims'].map(table => [table, f.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+}
+function replayImage(id, stage) { return `/api/archive/image?replayId=${encodeURIComponent(id)}&stage=${stage}`; }
+async function replayGuess(f, token, replayId, personId, requestId = crypto.randomUUID()) {
+  return f.call('archive/guess', {replayId, personId, requestId}, token);
+}
+
+test('study mode starts at November 19 Central midnight and stops daily games and claims', async t => {
+  const f = fixture(t);
+  await f.publish('2026-11-18'); await f.publish(STUDY_START);
+  f.setTime('2026-11-19T05:59:59Z');
+  const before = await f.call('status');
+  assert.equal(before.code, 200);
+  assert.equal(before.date, '2026-11-18');
+  assert.equal(before.mode, 'daily');
+  assert.equal(before.archiveStarts, STUDY_START);
+  assert.equal(before.nextReset, STUDY_NOW.replace('Z', '.000Z'));
+  assert.notEqual((await f.call('archive')).code, 200);
+  const winner = await f.start(), playing = await f.start();
+  assert.equal(playing.game.available, true);
+  const request = {personId: ANSWER.id, date: '2026-11-18', requestId: 'last-daily-guess'};
+  assert.equal((await f.call('guess', request, winner.token)).status, 'won');
+  const original = competitionSnapshot(f);
+  f.setTime(STUDY_NOW);
+  const after = await f.call('status');
+  assert.equal(after.code, 200);
+  assert.equal(after.date, STUDY_START);
+  assert.equal(after.mode, 'archive');
+  assert.equal(after.archiveStarts, STUDY_START);
+  const daily = await f.call('game', undefined, playing.token);
+  assert.equal(daily.code, 200);
+  assert.equal(daily.available, false);
+  assert.equal(daily.reason, 'study');
+  assert.equal(daily.date, STUDY_START);
+  assert.notEqual((await f.call('guess', request, winner.token)).code, 200, 'even old idempotent daily requests cannot continue the season');
+  assert.notEqual((await f.guess(playing.token, ANSWER.id, {date: '2026-11-18'})).code, 200);
+  assert.notEqual((await f.guess(playing.token, ANSWER.id, {date: STUDY_START})).code, 200);
+  assert.notEqual((await f.call('claim', {personId: roster[10].id, table: roster[10].table, date: '2026-11-18'}, winner.token)).code, 200);
+  assert.deepEqual(competitionSnapshot(f), original);
+  f.setTime('2027-01-02T18:00:00Z'); f.restart();
+  assert.equal((await f.call('status')).mode, 'archive');
+  assert.equal((await f.call('game', undefined, playing.token)).reason, 'study', 'the weekend closure no longer replaces the study archive');
+});
+
+test('archive lists only published pre-study puzzles without answers, facts, or session mutations', async t => {
+  const f = fixture(t); f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  await f.call('admin/puzzle', factPuzzle(), ADMIN);
+  await f.publish('2026-11-17', {published: false});
+  await f.publish('2026-11-18');
+  await f.publish(STUDY_START); await f.publish('2026-12-01');
+  const original = competitionSnapshot(f);
+  f.setTime(STUDY_NOW);
+  for (const token of [undefined, 'expired-session']) {
+    const result = await f.call('archive', undefined, token);
+    assert.equal(result.code, 200);
+    assert.equal(result.date, STUDY_START);
+    assert.deepEqual(result.entries, [
+      {date: '2026-11-18', number: 21, clueType: 'photo'},
+      {date: TODAY, number: 1, clueType: 'facts'},
+    ]);
+    assert.equal(JSON.stringify(result).includes(ANSWER.name), false);
+    assert.equal(JSON.stringify(result).includes(FACTS[0]), false);
+  }
+  assert.deepEqual(competitionSnapshot(f), original);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0);
+  const empty = fixture(t); empty.setTime(STUDY_NOW);
+  assert.deepEqual((await empty.call('archive')).entries, []);
+});
+
+test('archive replays require a valid session, resume progress, and restart independently', async t => {
+  const f = fixture(t); await f.publish(); await f.publish('2026-11-18', {published: false}); await f.publish(STUDY_START);
+  const {token} = await f.call('session', {}), other = await f.call('session', {});
+  assert.notEqual((await f.call('archive/start', {date: TODAY}, token)).code, 200, 'archive cannot be opened before the cutoff');
+  f.setTime(STUDY_NOW);
+  assert.equal((await f.call('archive/start', {date: TODAY})).code, 401);
+  assert.equal((await f.call('archive/start', {date: TODAY}, 'expired-session')).code, 401);
+  for (const date of ['2026-02-30', 'not-a-date', '2026-10-28', '2026-11-18', STUDY_START, '2026-12-01']) {
+    assert.notEqual((await f.call('archive/start', {date}, token)).code, 200, date);
+  }
+  const first = await f.call('archive/start', {date: TODAY}, token);
+  assert.equal(first.code, 200);
+  assert.equal(first.available, true);
+  assert.equal(first.replay, true);
+  assert.equal(typeof first.replayId, 'string');
+  assert.ok(first.replayId.length >= 16);
+  assert.equal(first.points, 0);
+  assert.equal(first.nextReset, null);
+  assert.deepEqual(first.guesses, []);
+  assert.equal(first.status, 'playing');
+  assert.equal(first.maxGuesses, 5);
+  assert.equal('answer' in first, false);
+  assert.equal((await f.raw(first.image, undefined, token)).status, 200);
+  assert.equal((await f.raw(first.image)).status, 401);
+  assert.notEqual((await f.raw(first.image, undefined, other.token)).status, 200);
+  for (const path of ['archive/game?replayId=' + first.replayId, 'archive/game?replayId=invented']) {
+    assert.notEqual((await f.call(path, undefined, other.token)).code, 200);
+  }
+  assert.notEqual((await replayGuess(f, other.token, first.replayId, ANSWER.id)).code, 200);
+  const next = await replayGuess(f, token, first.replayId, roster[1].id);
+  assert.equal(next.guesses.length, 1);
+  assert.deepEqual(await f.call('archive/start', {date: TODAY}, token), next);
+  f.restart();
+  assert.deepEqual(await f.call('archive/game?replayId=' + first.replayId, undefined, token), next);
+  const fresh = await f.call('archive/start', {date: TODAY, restart: true}, token);
+  assert.notEqual(fresh.replayId, first.replayId);
+  assert.equal(fresh.guesses.length, 0);
+  assert.equal(fresh.status, 'playing');
+  assert.deepEqual(await f.call('archive/start', {date: TODAY}, token), fresh, 'same-millisecond restarts resume the newest replay');
+  assert.deepEqual(await f.call('archive/game?replayId=' + first.replayId, undefined, token), next, 'restart preserves the previous attempt');
+  assert.notEqual((await f.raw(replayImage(fresh.replayId, '1'), undefined, token)).status, 200, 'the new attempt must unlock its own photos');
+  assert.notEqual((await f.raw(`/api/image?date=${TODAY}&stage=0`, undefined, token)).status, 200, 'a replay does not unlock the daily image route');
+  const separate = await f.call('archive/start', {date: TODAY}, other.token);
+  assert.notEqual(separate.replayId, fresh.replayId);
+  assert.equal(separate.guesses.length, 0);
+});
+
+test('lookbook replays reveal one fact, three facts, and three crops over exactly five guesses', async t => {
+  const f = fixture(t); f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  await f.call('admin/puzzle', factPuzzle(), ADMIN);
+  const {token} = await f.call('session', {}); f.setTime(STUDY_NOW);
+  const original = competitionSnapshot(f);
+  const first = await f.call('archive/start', {date: TODAY}, token), id = first.replayId;
+  assert.equal(first.code, 200);
+  assert.deepEqual(first.clue, {type: 'facts', facts: [FACTS[0]]});
+  assert.equal(first.image, null);
+  assert.equal(JSON.stringify(first).includes(FACTS[1]), false);
+  assert.equal(JSON.stringify(first).includes(FACTS[2]), false);
+  for (const stage of ['0', '1', '2', '3', '4', 'reveal']) assert.equal((await f.raw(replayImage(id, stage), undefined, token)).status, 403);
+  let next = await replayGuess(f, token, id, roster[1].id, 'replay-first-miss');
+  assert.deepEqual(next.clue, {type: 'facts', facts: FACTS});
+  assert.equal(next.image, null);
+  assert.deepEqual(await replayGuess(f, token, id, roster[1].id, 'replay-first-miss'), next);
+  assert.equal((await replayGuess(f, token, id, roster[2].id, 'replay-first-miss')).code, 409);
+  assert.equal((await replayGuess(f, token, id, roster[1].id)).code, 409);
+  assert.equal((await f.raw(replayImage(id, '0'), undefined, token)).status, 403);
+  for (let wrong = 2; wrong <= 4; wrong++) {
+    next = await replayGuess(f, token, id, roster[wrong].id);
+    assert.deepEqual(next.clue, {type: 'photo'});
+    assert.equal(next.guesses.length, wrong);
+    assert.equal(new URL(next.image, 'https://m2ordle.test').searchParams.get('stage'), String(wrong - 2));
+    assert.equal((await f.raw(next.image, undefined, token)).status, 200);
+    assert.equal((await f.raw(replayImage(id, String(wrong - 1)), undefined, token)).status, 403);
+    assert.equal((await f.raw(replayImage(id, 'reveal'), undefined, token)).status, 403);
+    assert.equal('answer' in next, false);
+  }
+  const lost = await replayGuess(f, token, id, roster[5].id, 'replay-final-miss');
+  assert.equal(lost.status, 'lost');
+  assert.equal(lost.guesses.length, 5);
+  assert.equal(lost.points, 0);
+  assert.equal(lost.answer.name, ANSWER.name);
+  assert.equal(lost.nextReset, null);
+  assert.equal((await f.raw(lost.image, undefined, token)).status, 200);
+  assert.deepEqual(await replayGuess(f, token, id, roster[5].id, 'replay-final-miss'), lost);
+  assert.equal((await replayGuess(f, token, id, ANSWER.id)).code, 409);
+  for (const stage of ['0', '1', '2']) assert.equal((await f.raw(replayImage(id, stage), undefined, token)).status, 200);
+  for (const stage of ['3', '4']) assert.equal((await f.raw(replayImage(id, stage), undefined, token)).status, 403);
+  f.restart();
+  assert.deepEqual(await f.call('archive/start', {date: TODAY}, token), lost);
+  assert.deepEqual(competitionSnapshot(f), original);
+});
+
+test('early replay wins reveal the portrait without granting points or unseen photo clues', async t => {
+  const f = fixture(t); f.setLookbook([[ANSWER.id, {facts: FACTS, page: 2}]]);
+  await f.call('admin/puzzle', factPuzzle(), ADMIN);
+  const {token} = await f.call('session', {}); f.setTime(STUDY_NOW);
+  for (const attempts of [1, 2]) {
+    const first = await f.call('archive/start', {date: TODAY, restart: true}, token), id = first.replayId;
+    if (attempts === 2) await replayGuess(f, token, id, roster[1].id);
+    const won = await replayGuess(f, token, id, ANSWER.id, 'same-id-on-distinct-replays');
+    assert.equal(won.status, 'won');
+    assert.equal(won.guesses.length, attempts);
+    assert.equal(won.points, 0);
+    assert.equal(won.answer.id, ANSWER.id);
+    assert.equal('claimed' in won, false);
+    assert.equal((await f.raw(won.image, undefined, token)).status, 200);
+    for (const stage of ['0', '1', '2', '3', '4']) assert.equal((await f.raw(replayImage(id, stage), undefined, token)).status, 403);
+    assert.notEqual((await f.call('claim', {personId: roster[10].id, table: roster[10].table, date: TODAY, replayId: id}, token)).code, 200);
+  }
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM games').get().n, 0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM claims').get().n, 0);
+  const stats = await f.call('stats', undefined, token);
+  assert.equal(stats.played, 0);
+  assert.equal(stats.wins, 0);
+});
+
+test('photo-only replays keep five crops and isolate request IDs and forged scoring fields', async t => {
+  const f = fixture(t); await f.publish();
+  const {token} = await f.call('session', {}); f.setTime(STUDY_NOW);
+  let game = await f.call('archive/start', {date: TODAY}, token);
+  const id = game.replayId;
+  assert.deepEqual(game.clue, {type: 'photo'});
+  for (let step = 0; step < 5; step++) {
+    assert.equal(game.guesses.length, step);
+    assert.equal(new URL(game.image, 'https://m2ordle.test').searchParams.get('stage'), String(step));
+    assert.equal((await f.raw(game.image, undefined, token)).status, 200);
+    assert.equal((await f.raw(replayImage(id, 'reveal'), undefined, token)).status, 403);
+    if (step < 4) assert.equal((await f.raw(replayImage(id, String(step + 1)), undefined, token)).status, 403);
+    game = await f.call('archive/guess', {replayId: id, personId: step === 4 ? ANSWER.id : roster[step + 1].id, requestId: `photo-guess-${step}`, points: 999, status: 'won', guesses: []}, token);
+    assert.equal(game.code, 200);
+    assert.equal(game.points, 0);
+  }
+  assert.equal(game.status, 'won');
+  assert.equal(game.guesses.length, 5);
+  assert.equal((await f.raw(game.image, undefined, token)).status, 200);
+  const fresh = await f.call('archive/start', {date: TODAY, restart: true}, token);
+  const freshWin = await replayGuess(f, token, fresh.replayId, ANSWER.id, 'photo-guess-0');
+  assert.equal(freshWin.status, 'won');
+  assert.equal(freshWin.guesses.length, 1, 'request IDs are scoped to an attempt');
+  const forged = await replayGuess(f, token, fresh.replayId, 'invented-person');
+  assert.notEqual(forged.code, 200);
+});
+
+test('study period freezes competition stats and standings while unlimited replays leave originals intact', async t => {
+  const f = fixture(t);
+  for (const date of ['2026-11-17', '2026-11-18', STUDY_START]) await f.publish(date);
+  f.setTime('2026-11-17T18:00:00Z');
+  const {token} = await f.start(); await f.guess(token);
+  const identity = roster[10];
+  await f.call('claim', {personId: identity.id, table: identity.table}, token);
+  f.setTime('2026-11-18T18:00:00Z');
+  await f.call('game', undefined, token); await f.guess(token, roster[1].id); await f.guess(token);
+  await f.call('claim', {personId: identity.id, table: identity.table}, token);
+  f.setTime(STUDY_NOW);
+  const stats = await f.call('stats', undefined, token), board = await f.call('leaderboard', undefined, token);
+  assert.equal(stats.played, 2);
+  assert.equal(stats.wins, 2);
+  assert.equal(stats.streak, 2);
+  assert.equal(stats.maxStreak, 2);
+  assert.deepEqual(stats.distribution, [1, 1, 0, 0, 0]);
+  assert.deepEqual(board.entries.map(({points, played, wins, isYou}) => ({points, played, wins, isYou})), [{points: 9, played: 2, wins: 2, isYou: true}]);
+  // Pre-existing or manually imported later records must not enter the completed season.
+  f.db.prepare('INSERT INTO games(session,date,status,guesses,created,completed) VALUES (?,?,?,?,?,?)').run(token, STUDY_START, 'won', JSON.stringify([{personId: ANSWER.id, correct: true}]), 0, 1);
+  f.db.prepare('INSERT INTO claims(date,person_id,session,points,won,attempts,created) VALUES (?,?,?,?,?,?,?)').run(STUDY_START, roster[11].id, token, 99, 1, 1, 1);
+  const original = competitionSnapshot(f);
+  const laterStats = await f.call('stats', undefined, token);
+  assert.deepEqual(laterStats, stats);
+  assert.deepEqual((await f.call('leaderboard', undefined, token)).entries, board.entries);
+  for (let repeat = 0; repeat < 3; repeat++) {
+    const game = await f.call('archive/start', {date: '2026-11-18', restart: true}, token);
+    if (repeat === 1) {
+      for (let miss = 1; miss <= 5; miss++) await replayGuess(f, token, game.replayId, roster[miss].id);
+    } else await replayGuess(f, token, game.replayId, ANSWER.id);
+  }
+  f.setTime('2027-03-15T17:00:00Z'); f.restart();
+  assert.deepEqual(await f.call('stats', undefined, token), stats, 'streaks stop aging after the study period begins');
+  assert.deepEqual((await f.call('leaderboard', undefined, token)).entries, board.entries);
+  assert.deepEqual(competitionSnapshot(f), original, 'replays never rewrite daily results, puzzle data, or verified claims');
+});
+
+test('replay failures roll back progress and archived puzzle content locks once opened', async t => {
+  const f = fixture(t); await f.publish();
+  const {token} = await f.call('session', {}); f.setTime(STUDY_NOW);
+  const game = await f.call('archive/start', {date: TODAY}, token), id = game.replayId;
+  const saved = competitionSnapshot(f);
+  assert.equal((await f.call('admin/puzzle?date=' + TODAY, undefined, ADMIN)).puzzle.locked, true);
+  assert.equal((await f.call('admin/calendar?month=2026-10', undefined, ADMIN)).days[0].locked, true);
+  assert.equal((await f.publish(TODAY, {personId: roster[1].id})).code, 409);
+  assert.equal((await f.publish(TODAY, {published: false})).code, 409);
+  assert.equal((await f.publish('2026-10-28')).code, 409, 'replays prevent earlier epoch changes from renumbering played puzzles');
+  assert.equal((await f.call('archive/start', {date: TODAY, restart: 'yes'}, token)).code, 400);
+  for (const body of [
+    {personId: ANSWER.id, requestId: 'valid-replay-request'},
+    {replayId: id, personId: ANSWER.id, requestId: 'short'},
+    {replayId: id, personId: 'not-a-classmate', requestId: 'valid-replay-request'},
+  ]) assert.notEqual((await f.call('archive/guess', body, token)).code, 200);
+  assert.deepEqual(await f.call('archive/game?replayId=' + id, undefined, token), game);
+  const exec = f.room.sql.exec;
+  f.room.sql.exec = (query, ...args) => {
+    if (query.startsWith('INSERT INTO replay_requests')) throw new Error('fixture replay storage failure');
+    return exec(query, ...args);
+  };
+  assert.equal((await replayGuess(f, token, id, ANSWER.id, 'retry-after-rollback')).code, 500);
+  f.room.sql.exec = exec;
+  assert.deepEqual(await f.call('archive/game?replayId=' + id, undefined, token), game);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM replay_requests').get().n, 0);
+  assert.equal((await replayGuess(f, token, id, ANSWER.id, 'retry-after-rollback')).status, 'won');
+  assert.deepEqual(competitionSnapshot(f), saved);
+});

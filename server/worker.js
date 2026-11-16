@@ -2,7 +2,7 @@ import roster from './roster.json' with {type: 'json'};
 import photos from './photos.json' with {type: 'json'};
 import lookbook from './lookbook.json' with {type: 'json'};
 import {lookbookById, validateFacts} from './lookbook.js';
-import {MAX_GUESSES, centralDate, nextCentralMidnight, validDate, dayDistance, score, publicGuesses, validateCrops, validateJpeg, calculateStats} from './core.js';
+import {MAX_GUESSES, ARCHIVE_STARTS, centralDate, nextCentralMidnight, validDate, dayDistance, score, publicGuesses, validateCrops, validateJpeg, calculateStats} from './core.js';
 
 const json = (data, status = 200) => Response.json(data, {status, headers: {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}});
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), {status}); };
@@ -62,10 +62,13 @@ export class M2ordle {
       CREATE TABLE IF NOT EXISTS images (date TEXT NOT NULL, stage TEXT NOT NULL, jpeg TEXT NOT NULL, PRIMARY KEY (date, stage));
       CREATE TABLE IF NOT EXISTS games (session TEXT NOT NULL, date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'playing', guesses TEXT NOT NULL DEFAULT '[]', created INTEGER NOT NULL, completed INTEGER, PRIMARY KEY (session, date));
       CREATE TABLE IF NOT EXISTS guess_requests (session TEXT NOT NULL, request_id TEXT NOT NULL, date TEXT NOT NULL, person_id TEXT NOT NULL, PRIMARY KEY (session, request_id));
+      CREATE TABLE IF NOT EXISTS replays (id TEXT PRIMARY KEY, session TEXT NOT NULL, date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'playing', guesses TEXT NOT NULL DEFAULT '[]', created INTEGER NOT NULL, completed INTEGER);
+      CREATE TABLE IF NOT EXISTS replay_requests (replay_id TEXT NOT NULL, request_id TEXT NOT NULL, person_id TEXT NOT NULL, PRIMARY KEY (replay_id, request_id));
       CREATE TABLE IF NOT EXISTS claims (date TEXT NOT NULL, person_id TEXT NOT NULL, session TEXT NOT NULL, points INTEGER NOT NULL, won INTEGER NOT NULL, attempts INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (date, person_id), UNIQUE (date, session));
       CREATE TABLE IF NOT EXISTS limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, until INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS games_date ON games(date, status);
       CREATE INDEX IF NOT EXISTS claims_person ON claims(person_id);
+      CREATE INDEX IF NOT EXISTS replays_session_date ON replays(session, date, created);
     `);
     if (!this.all('PRAGMA table_info(puzzles)').some(column => column.name === 'facts')) this.sql.exec("ALTER TABLE puzzles ADD COLUMN facts TEXT NOT NULL DEFAULT '[]'");
   }
@@ -73,6 +76,16 @@ export class M2ordle {
   all(query, ...args) { return this.sql.exec(query, ...args).toArray(); }
   atomic(fn) { return this.ctx.storage.transactionSync(fn); }
   now() { return Date.now(); }
+  siteStatus() {
+    const now = this.now(), date = centralDate(now);
+    return {date, mode: date >= ARCHIVE_STARTS ? 'archive' : 'daily', archiveStarts: ARCHIVE_STARTS, nextReset: nextCentralMidnight(now)};
+  }
+  requireDaily() {
+    if (centralDate(this.now()) >= ARCHIVE_STARTS) fail('Daily M2ordles have ended for the study period. Play a past M2ordle from the archive.', 409);
+  }
+  requireArchive() {
+    if (centralDate(this.now()) < ARCHIVE_STARTS) fail('Past M2ordles open on November 19, Central Time.', 409);
+  }
   checkLimit(key, maximum, duration, consume = true) {
     const now = this.now(), existing = this.one('SELECT count,until FROM limits WHERE key=?', key);
     if (existing && existing.until > now && existing.count >= maximum) fail('Too many attempts. Please try again in 15 minutes.', 429);
@@ -110,6 +123,7 @@ export class M2ordle {
     return this.one('SELECT * FROM games WHERE session=? AND date=?', token, date);
   }
   state(token, date = centralDate(this.now()), create = false) {
+    if (centralDate(this.now()) >= ARCHIVE_STARTS) return {available: false, reason: 'study', date: centralDate(this.now()), nextReset: nextCentralMidnight(this.now()), message: 'Daily M2ordles have ended for the Step 1 study period. See the class standings and play past M2ordles.'};
     const nextReset = nextCentralMidnight(this.now()), puzzle = this.puzzle(date);
     if (!puzzle) {
       const weekday = new Date(date + 'T00:00:00Z').getUTCDay();
@@ -118,21 +132,86 @@ export class M2ordle {
     }
     const row = this.gameRow(token, date, create);
     if (!row) fail('Start today’s puzzle first.', 409);
-    const guesses = JSON.parse(row.guesses), completed = row.status !== 'playing';
     const claim = this.one('SELECT person_id FROM claims WHERE session=? AND date=?', token, date);
+    return {...this.gameState(row, puzzle), nextReset, ...(claim ? {claimed: {name: this.people.get(claim.person_id).name}} : {})};
+  }
+  gameState(row, puzzle, replay = false) {
+    const date = row.date, guesses = JSON.parse(row.guesses), completed = row.status !== 'playing';
     const epoch = this.one("SELECT value FROM settings WHERE key='epoch'").value;
     const facts = JSON.parse(puzzle.facts), factPhase = !completed && facts.length === 3 && guesses.length < 2;
     const stage = completed ? 'reveal' : String(guesses.length - (facts.length === 3 ? 2 : 0));
+    const image = replay ? `/api/archive/image?replayId=${row.id}&stage=${stage}` : `/api/image?date=${date}&stage=${stage}`;
     return {
-      available: true, date, number: dayDistance(epoch, date) + 1, nextReset, maxGuesses: MAX_GUESSES,
-      status: row.status, guesses: publicGuesses(guesses, this.people), image: factPhase ? null : `/api/image?date=${date}&stage=${stage}`,
+      available: true, date, number: dayDistance(epoch, date) + 1, maxGuesses: MAX_GUESSES,
+      status: row.status, guesses: publicGuesses(guesses, this.people), image: factPhase ? null : image,
       clue: factPhase ? {type: 'facts', facts: facts.slice(0, guesses.length === 0 ? 1 : 3)} : {type: 'photo'},
       ...(completed ? {answer: {id: puzzle.person_id, name: this.people.get(puzzle.person_id).name}} : {}),
-      points: score(row.status, guesses.length), ...(claim ? {claimed: {name: this.people.get(claim.person_id).name}} : {}),
+      points: replay ? 0 : score(row.status, guesses.length), ...(replay ? {replay: true, replayId: row.id, nextReset: null} : {}),
       shareUrl: this.env.SHARE_URL || 'https://dev1niscool.github.io/m2ordle'
     };
   }
+  archive() {
+    this.requireArchive();
+    const date = centralDate(this.now()), epoch = this.one("SELECT value FROM settings WHERE key='epoch'")?.value;
+    const entries = this.all('SELECT date,facts FROM puzzles WHERE published=1 AND date<? AND date<? ORDER BY date DESC', ARCHIVE_STARTS, date)
+      .map(row => ({date: row.date, number: dayDistance(epoch, row.date) + 1, clueType: JSON.parse(row.facts).length === 3 ? 'facts' : 'photo'}));
+    return {date, entries};
+  }
+  archivePuzzle(date) {
+    this.requireArchive();
+    if (!validDate(date)) fail('Choose a valid puzzle date.');
+    if (date >= ARCHIVE_STARTS || date >= centralDate(this.now())) fail('This puzzle is not in the archive.', 404);
+    const puzzle = this.puzzle(date);
+    if (!puzzle) fail('This puzzle is not in the archive.', 404);
+    return puzzle;
+  }
+  replayRow(token, replayId) {
+    this.requireArchive();
+    if (typeof replayId !== 'string' || !/^[\w-]{1,100}$/.test(replayId)) fail('Choose a valid replay.');
+    const replay = this.one('SELECT * FROM replays WHERE id=? AND session=?', replayId, token);
+    if (!replay) fail('This replay was not found. Choose a past M2ordle to start.', 404);
+    return replay;
+  }
+  replayState(token, replayId) {
+    const row = this.replayRow(token, replayId);
+    return this.gameState(row, this.archivePuzzle(row.date), true);
+  }
+  startReplay(token, body) {
+    const puzzle = this.archivePuzzle(body.date);
+    if (body.restart !== undefined && typeof body.restart !== 'boolean') fail('Choose a valid replay option.');
+    return this.atomic(() => {
+      let row = !body.restart && this.one('SELECT * FROM replays WHERE session=? AND date=? ORDER BY created DESC,rowid DESC LIMIT 1', token, body.date);
+      if (!row) {
+        const id = crypto.randomUUID();
+        this.sql.exec('INSERT INTO replays(id,session,date,created) VALUES (?,?,?,?)', id, token, body.date, this.now());
+        row = this.one('SELECT * FROM replays WHERE id=?', id);
+      }
+      return this.gameState(row, puzzle, true);
+    });
+  }
+  guessReplay(token, body) {
+    if (!this.people.has(body.personId)) fail('Choose a classmate from the list.');
+    if (typeof body.requestId !== 'string' || !/^[\w-]{8,100}$/.test(body.requestId)) fail('A valid request ID is required.');
+    return this.atomic(() => {
+      const row = this.replayRow(token, body.replayId), puzzle = this.archivePuzzle(row.date);
+      const previous = this.one('SELECT person_id FROM replay_requests WHERE replay_id=? AND request_id=?', row.id, body.requestId);
+      if (previous) {
+        if (previous.person_id !== body.personId) fail('This guess request was already used.', 409);
+        return this.gameState(row, puzzle, true);
+      }
+      if (row.status !== 'playing') fail('You have finished this replay. Choose Play again to start over.', 409);
+      const guesses = JSON.parse(row.guesses);
+      if (guesses.some(guess => guess.personId === body.personId)) fail('You have already guessed that classmate.', 409);
+      const correct = body.personId === puzzle.person_id;
+      guesses.push({personId: body.personId, correct});
+      const status = correct ? 'won' : guesses.length === MAX_GUESSES ? 'lost' : 'playing';
+      this.sql.exec('UPDATE replays SET guesses=?,status=?,completed=? WHERE id=?', JSON.stringify(guesses), status, status === 'playing' ? null : this.now(), row.id);
+      this.sql.exec('INSERT INTO replay_requests(replay_id,request_id,person_id) VALUES (?,?,?)', row.id, body.requestId, body.personId);
+      return this.replayState(token, row.id);
+    });
+  }
   guess(token, body) {
+    this.requireDaily();
     if (!this.people.has(body.personId)) fail('Choose a classmate from the list.');
     if (typeof body.requestId !== 'string' || !/^[\w-]{8,100}$/.test(body.requestId)) fail('A valid request ID is required.');
     return this.atomic(() => {
@@ -158,6 +237,7 @@ export class M2ordle {
     });
   }
   claim(token, body, request) {
+    this.requireDaily();
     const person = this.people.get(body.personId);
     if (!person) fail('Choose your name from the list.');
     return this.atomic(() => {
@@ -187,8 +267,8 @@ export class M2ordle {
   }
   leaderboard(token) {
     const now = this.now(), date = centralDate(now);
-    const claim = token && this.one('SELECT claims.person_id FROM claims JOIN sessions ON sessions.token=claims.session WHERE claims.session=? ORDER BY claims.date DESC LIMIT 1', token);
-    const entries = this.all('SELECT person_id AS personId,SUM(points) AS points,SUM(won) AS wins,COUNT(*) AS played,AVG(attempts) AS averageGuesses FROM claims GROUP BY person_id')
+    const claim = token && this.one('SELECT claims.person_id FROM claims JOIN sessions ON sessions.token=claims.session WHERE claims.session=? AND claims.date<? ORDER BY claims.date DESC LIMIT 1', token, ARCHIVE_STARTS);
+    const entries = this.all('SELECT person_id AS personId,SUM(points) AS points,SUM(won) AS wins,COUNT(*) AS played,AVG(attempts) AS averageGuesses FROM claims WHERE date<? GROUP BY person_id', ARCHIVE_STARTS)
       .map(row => ({...row, name: this.people.get(row.personId)?.name || 'Classmate'}))
       .sort((a, b) => b.points - a.points || b.wins - a.wins || a.averageGuesses - b.averageGuesses || a.name.localeCompare(b.name));
     return {date, nextReset: nextCentralMidnight(now), entries: entries.map((row, index) => ({rank: index + 1, ...row, isYou: row.personId === claim?.person_id}))};
@@ -233,10 +313,10 @@ export class M2ordle {
       reveal = validateJpeg(body.reveal);
     } catch (error) { fail(error.message); }
     return this.atomic(() => {
-      if (this.one('SELECT 1 AS found FROM games WHERE date=? LIMIT 1', body.date)) fail('This puzzle has already been played and is locked to keep results fair.', 409);
+      if (this.one('SELECT 1 AS found FROM games WHERE date=? UNION ALL SELECT 1 AS found FROM replays WHERE date=? LIMIT 1', body.date, body.date)) fail('This puzzle has already been played and is locked to keep results fair.', 409);
       const epoch = this.one("SELECT value FROM settings WHERE key='epoch'");
       if (body.published && (!epoch || body.date < epoch.value)) {
-        if (epoch && this.one('SELECT 1 AS found FROM games LIMIT 1')) fail('Choose a date on or after the first M2ordle.', 409);
+        if (epoch && this.one('SELECT 1 AS found FROM games UNION ALL SELECT 1 AS found FROM replays LIMIT 1')) fail('Choose a date on or after the first M2ordle.', 409);
         this.sql.exec("INSERT INTO settings(key,value) VALUES ('epoch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", body.date);
       }
       this.sql.exec('INSERT INTO puzzles(date,person_id,photo_id,crops,published,updated,facts) VALUES (?,?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET person_id=excluded.person_id,photo_id=excluded.photo_id,crops=excluded.crops,published=excluded.published,updated=excluded.updated,facts=excluded.facts', body.date, body.personId, body.photoId, JSON.stringify(crops), Number(body.published), this.now(), JSON.stringify(facts));
@@ -250,7 +330,7 @@ export class M2ordle {
     if (!validDate(date)) fail('Choose a valid date.');
     const now = this.now(), today = centralDate(now);
     const dates = Array.from({length: 14}, (_, index) => new Date(Date.parse(today + 'T00:00:00Z') + index * 86400000).toISOString().slice(0, 10));
-    const scheduled = new Map(this.all('SELECT date,person_id,published,EXISTS(SELECT 1 FROM games WHERE games.date=puzzles.date) AS locked FROM puzzles WHERE date>=? AND date<=? ORDER BY date', today, dates.at(-1)).map(row => [row.date, row]));
+    const scheduled = new Map(this.all('SELECT date,person_id,published,(EXISTS(SELECT 1 FROM games WHERE games.date=puzzles.date) OR EXISTS(SELECT 1 FROM replays WHERE replays.date=puzzles.date)) AS locked FROM puzzles WHERE date>=? AND date<=? ORDER BY date', today, dates.at(-1)).map(row => [row.date, row]));
     const upcoming = dates.map(day => {
       const row = scheduled.get(day);
       return {date: day, published: Boolean(row?.published), name: row ? this.people.get(row.person_id)?.name || 'Classmate' : null, locked: Boolean(row?.locked)};
@@ -307,11 +387,19 @@ export class M2ordle {
     if (!game) fail('Start this puzzle before viewing its image.', 403);
     const puzzle = this.puzzle(date);
     if (!puzzle) fail('This puzzle is unavailable.', 404);
+    if (date >= ARCHIVE_STARTS) fail('Daily M2ordles have ended for the study period.', 409);
+    return this.gameImage(game, puzzle, stage);
+  }
+  replayImage(token, url) {
+    const row = this.replayRow(token, url.searchParams.get('replayId'));
+    return this.gameImage(row, this.archivePuzzle(row.date), url.searchParams.get('stage'));
+  }
+  gameImage(game, puzzle, stage) {
     const count = JSON.parse(game.guesses).length, completed = game.status !== 'playing';
     const factGuesses = JSON.parse(puzzle.facts).length === 3 ? 2 : 0;
     const allowed = stage === 'reveal' ? completed : /^[0-4]$/.test(stage || '') && Number(stage) < MAX_GUESSES - factGuesses && Number(stage) <= (completed ? count - 1 : count) - factGuesses;
     if (!allowed) fail('This image has not been unlocked yet.', 403);
-    const row = this.one('SELECT jpeg FROM images WHERE date=? AND stage=?', date, stage);
+    const row = this.one('SELECT jpeg FROM images WHERE date=? AND stage=?', game.date, stage);
     if (!row) fail('This image is unavailable.', 404);
     const raw = atob(row.jpeg), bytes = Uint8Array.from(raw, character => character.charCodeAt(0));
     return new Response(bytes, {headers: {'Content-Type': 'image/jpeg', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}});
@@ -328,19 +416,21 @@ export class M2ordle {
         if (method === 'GET' && path === '/api/admin/calendar') {
           const month = url.searchParams.get('month');
           if (!/^\d{4}-\d{2}$/.test(month || '') || !validDate(month + '-01')) fail('Choose a valid month.');
-          return json({days: this.all('SELECT date,person_id,photo_id,published,EXISTS(SELECT 1 FROM games WHERE games.date=puzzles.date) AS locked FROM puzzles WHERE date LIKE ? ORDER BY date', month + '-%').map(row => ({date: row.date, personId: row.person_id, name: this.people.get(row.person_id).name, photoId: row.photo_id, published: Boolean(row.published), locked: Boolean(row.locked)})), today: centralDate(this.now())});
+          return json({days: this.all('SELECT date,person_id,photo_id,published,(EXISTS(SELECT 1 FROM games WHERE games.date=puzzles.date) OR EXISTS(SELECT 1 FROM replays WHERE replays.date=puzzles.date)) AS locked FROM puzzles WHERE date LIKE ? ORDER BY date', month + '-%').map(row => ({date: row.date, personId: row.person_id, name: this.people.get(row.person_id).name, photoId: row.photo_id, published: Boolean(row.published), locked: Boolean(row.locked)})), today: centralDate(this.now())});
         }
         if (method === 'GET' && path === '/api/admin/puzzle') {
           const date = url.searchParams.get('date');
           if (!validDate(date)) fail('Choose a valid date.');
           const row = this.one('SELECT * FROM puzzles WHERE date=?', date);
-          return json({puzzle: row ? {date: row.date, personId: row.person_id, photoId: row.photo_id, crops: JSON.parse(row.crops), facts: JSON.parse(row.facts), useLookbook: JSON.parse(row.facts).length === 3, published: Boolean(row.published), locked: Boolean(this.one('SELECT 1 AS found FROM games WHERE date=? LIMIT 1', date))} : null});
+          return json({puzzle: row ? {date: row.date, personId: row.person_id, photoId: row.photo_id, crops: JSON.parse(row.crops), facts: JSON.parse(row.facts), useLookbook: JSON.parse(row.facts).length === 3, published: Boolean(row.published), locked: Boolean(this.one('SELECT 1 AS found FROM games WHERE date=? UNION ALL SELECT 1 AS found FROM replays WHERE date=? LIMIT 1', date, date))} : null});
         }
         if (method === 'POST' && path === '/api/admin/puzzle') return json(this.savePuzzle(await this.body(request)));
         if (method === 'POST' && path === '/api/admin/copy') return json(this.copyPuzzle(await this.body(request)));
         return json({error: 'Not found.'}, 404);
       }
       if (method === 'GET' && path === '/api/health') return json({ok: true});
+      if (method === 'GET' && path === '/api/status') return json(this.siteStatus());
+      if (method === 'GET' && path === '/api/archive') return json(this.archive());
       if (method === 'GET' && path === '/api/roster') return json({people: roster.map(({id, name}) => ({id, name}))});
       if (method === 'GET' && path === '/api/leaderboard') return json(this.leaderboard(bearer(request)));
       if (method === 'POST' && path === '/api/session') {
@@ -351,12 +441,16 @@ export class M2ordle {
         return json({token}, 201);
       }
       const session = this.session(request);
+      if (method === 'POST' && path === '/api/archive/start') return json(this.startReplay(session.token, await this.body(request)));
+      if (method === 'GET' && path === '/api/archive/game') return json(this.replayState(session.token, url.searchParams.get('replayId')));
+      if (method === 'POST' && path === '/api/archive/guess') return json(this.guessReplay(session.token, await this.body(request)));
+      if (method === 'GET' && path === '/api/archive/image') return this.replayImage(session.token, url);
       if (method === 'GET' && path === '/api/game') return json(this.atomic(() => this.state(session.token, centralDate(this.now()), true)));
       if (method === 'GET' && path === '/api/image') return this.image(session.token, url);
       if (method === 'GET' && path === '/api/stats') {
-        const today = centralDate(this.now());
-        const publishedDates = this.all('SELECT date FROM puzzles WHERE published=1 AND date<=?', today).map(row => row.date);
-        return json(calculateStats(this.all('SELECT date,status,guesses FROM games WHERE session=?', session.token), today, this.all('SELECT status,guesses FROM games WHERE date=?', today), publishedDates));
+        const currentDate = centralDate(this.now()), today = currentDate < ARCHIVE_STARTS ? currentDate : ARCHIVE_STARTS;
+        const publishedDates = this.all('SELECT date FROM puzzles WHERE published=1 AND date<=? AND date<?', today, ARCHIVE_STARTS).map(row => row.date);
+        return json(calculateStats(this.all('SELECT date,status,guesses FROM games WHERE session=? AND date<?', session.token, ARCHIVE_STARTS), today, currentDate < ARCHIVE_STARTS ? this.all('SELECT status,guesses FROM games WHERE date=?', today) : [], publishedDates));
       }
       if (method === 'POST' && path === '/api/guess') return json(this.guess(session.token, await this.body(request)));
       if (method === 'POST' && path === '/api/claim') {

@@ -1,5 +1,6 @@
 export const MAX_GUESSES = 5;
 export const TIME_ZONE = 'America/Chicago';
+export const ARCHIVE_STARTS = '2026-11-19';
 const dateFormat = new Intl.DateTimeFormat('en-CA', {timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit'});
 const hourFormat = new Intl.DateTimeFormat('en-US', {timeZone: TIME_ZONE, hour: '2-digit', hourCycle: 'h23'});
 export function centralDate(now = Date.now()) {

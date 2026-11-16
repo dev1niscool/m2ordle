@@ -11,6 +11,7 @@ test('autocomplete matches first and last word prefixes, accents, and multiword 
 test('share output always uses five squares and the specified public URL',()=>{
   assert.equal(shareText({number:1,guesses:[{correct:true}]}),'M2ordle #1\n🏥 🟩 ⬛ ⬛ ⬛ ⬛\n\nhttps://dev1niscool.github.io/m2ordle');
   assert.match(shareText({number:2,guesses:Array(5).fill({correct:false})}),/🏥 🟥 🟥 🟥 🟥 🟥/);
+  assert.equal(shareText({number:1,replay:true,guesses:[{correct:true}]}),'M2ordle #1 · Replay\n🏥 🟩 ⬛ ⬛ ⬛ ⬛\n\nhttps://dev1niscool.github.io/m2ordle');
 });
 test('countdown supports a 25-hour DST day and clamps expired time',()=>{
   assert.equal(countdown('2026-11-02T06:00:00Z',Date.parse('2026-11-01T05:00:00Z')),'25:00:00');

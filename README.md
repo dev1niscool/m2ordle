@@ -14,6 +14,14 @@ Unpublished Saturdays and Sundays preserve streaks without adding wins: a Friday
 
 Anyone can view the cumulative classwide leaderboard from the homepage, without starting or finishing a puzzle or verifying a name. Adding a score still requires a completed game and table-number verification; both solved and unsolved completed games qualify. Returning browsers highlight and scroll to the classmate from their most recent verified result, even on a new day.
 
+## Dedicated study period and replays
+
+At **midnight America/Chicago on November 19, 2026**, the player homepage automatically switches to a top-three podium, the full final class leaderboard, and **Play past M2ordles**. The normal daily game remains available through November 18. The switch is enforced by the server and does not need another deployment or a scheduled task.
+
+The archive lists published puzzles from before November 19 by date and puzzle number, without revealing their answers. Players can return to an unfinished replay or start another attempt after completing one. Each replay uses the puzzle's saved clue format: one fact, then all three facts, then three crops for lookbook puzzles, or five crops for photo-only puzzles. Both formats retain five guesses and a full-photo reveal.
+
+Replay attempts are stored separately from the original daily games. They never add leaderboard points, change personal statistics or streaks, or overwrite original results. Daily score submissions close at the transition, the leaderboard includes only pre-study-period results, and personal statistics remain frozen at the transition. Drafts and puzzles scheduled on or after November 19 are excluded from the archive.
+
 ## Schedule puzzles
 
 Open `admin.html` and enter the owner password. Select a date in the calendar, select a grouped portrait or alternate pose, and choose the person's name from the roster. An asterisk marks classmates with three matched lookbook facts; selecting one automatically shows their facts and switches the editor to three crops for guesses 3–5. Other names use five crops. The portraits are deliberately **not automatically identified**. Set the square crops by dragging or using arrow keys and adjusting the crop-size slider. Later crops must be at least as wide as earlier crops; they may move to a different area of the photo. Preview steps through all five clues and the full-photo reveal.

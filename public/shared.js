@@ -10,7 +10,7 @@ export function shareText(game) {
     const guess = game.guesses[index];
     return guess ? (guess.correct ? '🟩' : '🟥') : '⬛';
   }).join(' ');
-  return `M2ordle #${game.number}\n🏥 ${squares}\n\n${game.shareUrl || 'https://dev1niscool.github.io/m2ordle'}`;
+  return `M2ordle #${game.number}${game.replay ? ' · Replay' : ''}\n🏥 ${squares}\n\n${game.shareUrl || 'https://dev1niscool.github.io/m2ordle'}`;
 }
 export function countdown(reset, now = Date.now()) {
   const seconds = Math.max(0, Math.ceil((new Date(reset).getTime() - now) / 1000));
