@@ -991,3 +991,124 @@ test('replay failures roll back progress and archived puzzle content locks once 
   assert.equal((await replayGuess(f, token, id, ANSWER.id, 'retry-after-rollback')).status, 'won');
   assert.deepEqual(competitionSnapshot(f), saved);
 });
+
+function addWinnerClaim(f, person, {date = TODAY, points = 5, won = 1, attempts = 1} = {}) {
+  f.db.prepare('INSERT INTO claims(date,person_id,session,points,won,attempts,created) VALUES (?,?,?,?,?,?,?)').run(date, person.id, 'winner-' + person.id + date, points, won, attempts, 1);
+}
+function winnerCompetitionSnapshot(f) {
+  const snapshot = competitionSnapshot(f);
+  snapshot.settings = snapshot.settings.filter(row => row.key !== 'winner_portrait');
+  return snapshot;
+}
+
+test('winner portrait setup is private, validates its selection, and preserves all puzzle and score data', async t => {
+  const f = fixture(t); await f.publish(); addWinnerClaim(f, ANSWER);
+  const original = winnerCompetitionSnapshot(f);
+  assert.equal((await f.call('admin/winner')).code, 401);
+  assert.equal((await f.call('admin/winner', {personId: ANSWER.id, photoId: PHOTO.id, image: JPEG})).code, 401);
+  assert.equal((await f.raw('/api/admin/winner/image')).status, 401);
+  const initial = await f.call('admin/winner', undefined, ADMIN);
+  assert.equal(initial.selection, null);
+  assert.equal(initial.starts, STUDY_START);
+  assert.equal(initial.leader.personId, ANSWER.id);
+  for (const extra of [
+    {personId: 'unknown'}, {photoId: 'unknown'}, {image: 'data:image/png;base64,AAAA'},
+    {image: 'not an image'}, {clear: false},
+  ]) assert.equal((await f.call('admin/winner', {personId: ANSWER.id, photoId: PHOTO.id, image: JPEG, ...extra}, ADMIN)).code, 400);
+  assert.equal((await f.call('admin/winner', {personId: ANSWER.id, photoId: PHOTO.id, image: 'x'.repeat(1010001)}, ADMIN)).code, 413);
+  assert.equal((await f.call('admin/winner', undefined, ADMIN)).selection, null);
+  // A normal resized photo can exceed the API's default 4 KB JSON body limit.
+  const image = 'data:image/jpeg;base64,' + Buffer.from([255, 216, ...Array(6000).fill(0), 255, 217]).toString('base64');
+  const saved = await f.call('admin/winner', {personId: ANSWER.id, photoId: PHOTO.id, image}, ADMIN);
+  assert.equal(saved.code, 200);
+  assert.deepEqual(Object.keys(saved.selection).sort(), ['image', 'name', 'personId', 'photoId', 'updated']);
+  assert.equal(saved.selection.name, ANSWER.name);
+  assert.equal(saved.selection.photoId, PHOTO.id);
+  assert.equal(saved.selection.image, '/api/admin/winner/image');
+  assert.equal(JSON.stringify(saved).includes('jpeg'), false);
+  const preview = await f.raw(saved.selection.image, undefined, ADMIN);
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers.get('Content-Type'), 'image/jpeg');
+  assert.equal(preview.headers.get('Cache-Control'), 'private, no-store');
+  assert.equal(preview.headers.get('X-Content-Type-Options'), 'nosniff');
+  assert.deepEqual(Buffer.from(await preview.arrayBuffer()), Buffer.from(image.split(',')[1], 'base64'));
+  f.restart();
+  assert.deepEqual(await f.call('admin/winner', undefined, ADMIN), saved);
+  assert.deepEqual(winnerCompetitionSnapshot(f), original);
+});
+
+test('the winner photo opens only at the Central cutoff and public metadata follows the actual ranked leader', async t => {
+  const f = fixture(t); addWinnerClaim(f, ANSWER, {points: 5, won: 1, attempts: 1});
+  addWinnerClaim(f, roster[1], {points: 5, won: 1, attempts: 2});
+  addWinnerClaim(f, roster[2], {date: STUDY_START, points: 99});
+  await f.call('admin/winner', {personId: ANSWER.id, photoId: PHOTO.id, image: JPEG}, ADMIN);
+  const selection = f.room.winnerSelection();
+  const imageUrl = `/api/winner/portrait?person=${ANSWER.id}&version=${selection.revision}`;
+  f.setTime('2026-11-19T05:59:59Z');
+  assert.equal((await f.call('leaderboard')).winner, null);
+  assert.equal((await f.raw(imageUrl)).status, 404);
+  f.setTime(STUDY_NOW);
+  const board = await f.call('leaderboard');
+  assert.equal(board.entries[0].personId, ANSWER.id, 'the existing points/wins/guesses tie-breaker selects the winner');
+  assert.deepEqual(board.winner, {personId: ANSWER.id, name: ANSWER.name, points: 5, image: imageUrl});
+  assert.equal('photoId' in board.winner, false);
+  const publicPhoto = await f.raw(board.winner.image);
+  assert.equal(publicPhoto.status, 200);
+  assert.equal(publicPhoto.headers.get('Cache-Control'), 'private, no-store');
+  assert.deepEqual(Buffer.from(await publicPhoto.arrayBuffer()), Buffer.from(JPEG.split(',')[1], 'base64'));
+  for (const url of ['/api/winner/portrait', `/api/winner/portrait?person=${ANSWER.id}`, `/api/winner/portrait?version=${selection.revision}`, `/api/winner/portrait?person=${roster[1].id}&version=${selection.revision}`, `/api/winner/portrait?person=${ANSWER.id}&version=wrong`]) assert.equal((await f.raw(url)).status, 404);
+  assert.equal((await f.raw('/_portraits/' + PHOTO.path.split('/').at(-1))).status, 401, 'selecting one snapshot does not make original portraits public');
+});
+
+test('a changed leader hides a mismatched saved portrait and replacing it invalidates stale image URLs', async t => {
+  const f = fixture(t); addWinnerClaim(f, ANSWER); addWinnerClaim(f, roster[1], {points: 4});
+  await f.call('admin/winner', {personId: ANSWER.id, photoId: PHOTO.id, image: JPEG}, ADMIN);
+  f.setTime(STUDY_NOW);
+  const originalImage = (await f.call('leaderboard')).winner.image;
+  f.db.prepare('UPDATE claims SET points=6 WHERE person_id=?').run(roster[1].id);
+  const changed = await f.call('leaderboard');
+  assert.deepEqual(changed.winner, {personId: roster[1].id, name: roster[1].name, points: 6, image: null});
+  assert.equal((await f.raw(originalImage)).status, 404);
+  assert.equal((await f.call('admin/winner', undefined, ADMIN)).selection.personId, ANSWER.id, 'the owner can still review the previous selection');
+  assert.equal((await f.raw('/api/admin/winner/image', undefined, ADMIN)).status, 200);
+  const original = winnerCompetitionSnapshot(f);
+  const saved = await f.call('admin/winner', {personId: roster[1].id, photoId: PHOTO.id, image: JPEG}, ADMIN);
+  assert.equal(saved.selection.personId, roster[1].id);
+  const replacement = (await f.call('leaderboard')).winner.image;
+  assert.notEqual(replacement, originalImage);
+  assert.equal((await f.raw(replacement)).status, 200);
+  assert.equal((await f.raw(originalImage)).status, 404);
+  // Clear and re-save at the same clock instant must not resurrect an old image URL.
+  await f.call('admin/winner', {clear: true}, ADMIN);
+  assert.equal((await f.call('leaderboard')).winner.image, null);
+  assert.equal((await f.raw(replacement)).status, 404);
+  assert.equal((await f.raw('/api/admin/winner/image', undefined, ADMIN)).status, 404);
+  await f.call('admin/winner', {personId: roster[1].id, photoId: PHOTO.id, image: JPEG}, ADMIN);
+  const restored = (await f.call('leaderboard')).winner.image;
+  assert.notEqual(restored, replacement);
+  assert.equal((await f.raw(restored)).status, 200);
+  assert.equal((await f.raw(replacement)).status, 404);
+  await f.call('admin/winner', {personId: roster[1].id, photoId: PHOTO.id, image: JPEG}, ADMIN);
+  const resaved = (await f.call('leaderboard')).winner.image;
+  assert.notEqual(resaved, restored, 'two saves within a millisecond also get unique revisions');
+  assert.equal((await f.raw(restored)).status, 404);
+  assert.deepEqual(winnerCompetitionSnapshot(f), original);
+});
+
+test('empty standings never publish a selected winner photo and save failures preserve the previous choice', async t => {
+  const f = fixture(t);
+  const first = await f.call('admin/winner', {personId: ANSWER.id, photoId: PHOTO.id, image: JPEG}, ADMIN);
+  const revision = f.room.winnerSelection().revision;
+  f.setTime(STUDY_NOW);
+  assert.equal((await f.call('leaderboard')).winner, null);
+  assert.equal((await f.raw(`/api/winner/portrait?person=${ANSWER.id}&version=${revision}`)).status, 404);
+  const exec = f.room.sql.exec;
+  f.room.sql.exec = (query, ...args) => {
+    if (query.startsWith("INSERT INTO settings(key,value) VALUES ('winner_portrait'")) throw new Error('fixture winner storage failure');
+    return exec(query, ...args);
+  };
+  assert.equal((await f.call('admin/winner', {personId: roster[1].id, photoId: PHOTO.id, image: JPEG}, ADMIN)).code, 500);
+  f.room.sql.exec = exec;
+  assert.deepEqual(await f.call('admin/winner', undefined, ADMIN), first);
+  assert.equal(f.room.winnerSelection().revision, revision);
+});

@@ -291,11 +291,26 @@ function renderPodium(container,entries){
   }
   container.append(list);
 }
+function renderWinner(container,winner){
+  container.replaceChildren();container.hidden=!winner;
+  if(!winner)return;
+  const heading=document.createElement('h2');heading.id='winner-heading';
+  const name=document.createElement('span');name.textContent=winner.name;
+  heading.append(document.createTextNode('Congratulations to '),name,document.createTextNode(' for first place!'));
+  container.append(heading);
+  if(winner.image){
+    const frame=document.createElement('div');frame.className='winner-portrait-frame';
+    const portrait=document.createElement('img');portrait.alt=`${winner.name}, first-place M2ordle winner`;portrait.width=560;portrait.height=700;
+    portrait.onerror=()=>frame.remove();portrait.src=apiBase+winner.image;
+    frame.append(portrait);container.append(frame);
+  }
+}
 async function renderArchiveHome(currentNavigation){
-  app.innerHTML=`<section class="season-home"><header class="season-header"><img class="wordmark" src="./assets/m2ordle.svg?v=13" alt="M2ordle" width="700" height="180"><p class="season-kicker">THE CLASS LEADERBOARD</p><h1>One class. A lot of great guesses.</h1><p>M2ordle puzzles are closed for dedicated,<br>good luck on step!</p></header><section class="podium-section" aria-label="Top three guessers"><div data-podium></div></section><section class="season-standings" aria-labelledby="standings-title"><h2 id="standings-title">CLASSWIDE LEADERBOARD</h2><div data-standings><p class="identity-copy" role="status">Loading the class standings…</p></div></section><div class="archive-callout"><button class="play-button" data-archive><span class="play-icon" aria-hidden="true"></span>Play past M2ordles</button><p>Revisit the clues. Keep your original scores.</p></div><nav class="home-nav" aria-label="Game information"><button class="text-button" data-help>${icon('help')}How to play</button><button class="text-button" data-stats>${icon('stats')}My stats</button></nav></section>`;
+  app.innerHTML=`<section class="season-home"><header class="season-header"><img class="wordmark" src="./assets/m2ordle.svg?v=13" alt="M2ordle" width="700" height="180"><p class="season-kicker">THE CLASS LEADERBOARD</p><h1>One class. A lot of great guesses.</h1><p>M2ordle puzzles are closed for dedicated,<br>good luck on step!</p></header><section class="winner-celebration" aria-labelledby="winner-heading" data-winner hidden></section><section class="podium-section" aria-label="Top three guessers"><div data-podium></div></section><section class="season-standings" aria-labelledby="standings-title"><h2 id="standings-title">CLASSWIDE LEADERBOARD</h2><div data-standings><p class="identity-copy" role="status">Loading the class standings…</p></div></section><div class="archive-callout"><button class="play-button" data-archive><span class="play-icon" aria-hidden="true"></span>Play past M2ordles</button><p>Revisit the clues. Keep your original scores.</p></div><nav class="home-nav" aria-label="Game information"><button class="text-button" data-help>${icon('help')}How to play</button><button class="text-button" data-stats>${icon('stats')}My stats</button></nav></section>`;
   app.querySelector('[data-archive]').onclick=archive;app.querySelector('[data-help]').onclick=help;app.querySelector('[data-stats]').onclick=showStats;
   try{
     const data=await api('/api/leaderboard');if(currentNavigation!==navigation||screen!=='home')return;
+    renderWinner(app.querySelector('[data-winner]'),data.winner);
     renderPodium(app.querySelector('[data-podium]'),data.entries);const target=app.querySelector('[data-standings]');target.replaceChildren();appendStandings(target,data.entries);
   }catch(error){if(currentNavigation!==navigation||screen!=='home')return;const target=app.querySelector('[data-standings]');target.replaceChildren();const message=document.createElement('p');message.className='identity-copy';message.textContent=error.message;const retry=document.createElement('button');retry.className='pixel-button';retry.textContent='RETRY LEADERBOARD';retry.onclick=()=>renderArchiveHome(currentNavigation);target.append(message,retry);}
 }

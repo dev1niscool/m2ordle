@@ -6,7 +6,7 @@ import {validateLookbook} from '../server/lookbook-schema.js';
 
 export const PUBLIC_FILES = [
   'index.html', 'app.js', 'styles.css', 'config.js', 'shared.js', 'classmates.js',
-  'admin.html', 'admin.js', 'admin.css', 'admin-preview.js', 'admin-preview.css', 'favicon.svg', 'robots.txt', 'manifest.webmanifest',
+  'admin.html', 'admin.js', 'admin.css', 'admin-preview.js', 'admin-preview.css', 'admin-winner.js', 'favicon.svg', 'robots.txt', 'manifest.webmanifest',
 ];
 const REQUIRED_FILES = ['index.html', 'app.js', 'styles.css', 'classmates.js', 'admin.html', 'admin.js', 'admin.css'];
 

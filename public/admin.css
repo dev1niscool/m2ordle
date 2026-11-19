@@ -173,3 +173,63 @@
 .lookbook-facts ol{padding-left:23px;margin:0;font-size:16px;line-height:1.65;overflow-wrap:anywhere}
 .lookbook-facts li+li{margin-top:12px}
 @media(max-width:600px){.lookbook-facts{padding:14px}.crop-stage-top strong{font-size:12px;line-height:1.5}.lookbook-legend,.clue-format{font-size:14px}}
+
+/* Winner portraits are selected separately from daily puzzles. */
+.winner-panel{grid-column:1/-1;padding:26px;border-color:#8d9f4f}
+.winner-panel-heading{display:flex;justify-content:space-between;align-items:center;gap:20px}
+.winner-panel-heading h2{font-size:28px;line-height:1.25;margin:4px 0 0}
+.winner-panel-heading button{flex-shrink:0}
+.winner-intro,.winner-leader{font-size:16px;line-height:1.6;margin:16px 0 0}
+.winner-intro{color:var(--violet)}
+.winner-leader{color:var(--lime);padding:12px 16px;border:1px solid #a0b95666;background:#dbff5908}
+.winner-editor-layout{display:grid;grid-template-columns:210px minmax(0,1fr);gap:30px;align-items:start;margin-top:24px}
+.winner-admin-preview{margin:0;min-width:0}
+.winner-admin-frame{position:relative;padding:7px;background:#2c2140;border:3px solid var(--lime);box-shadow:5px 5px 0 #050309;aspect-ratio:4/5}
+.winner-admin-frame::before,.winner-admin-frame::after{content:'';position:absolute;width:16px;height:16px;border:3px solid var(--cream);pointer-events:none}
+.winner-admin-frame::before{left:-7px;top:-7px;border-right:0;border-bottom:0}
+.winner-admin-frame::after{right:-7px;bottom:-7px;border-left:0;border-top:0}
+.winner-admin-frame canvas{display:block;width:100%;height:auto;background:#140e21}
+.winner-photo-empty{display:flex;min-height:100%;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--violet);background:#140e21;aspect-ratio:4/5}
+.winner-photo-empty span{font-size:42px;color:var(--lime)}
+.winner-photo-empty p{font-size:16px;margin:8px}
+.winner-admin-preview figcaption{font-size:14px;line-height:1.5;color:var(--violet);margin-top:16px;text-align:center;overflow-wrap:anywhere}
+.winner-editor-controls{min-width:0}
+.winner-field-label{display:block;font-size:16px;color:var(--cream);margin:0 0 8px}
+.winner-editor-controls .name-options{z-index:30}
+.winner-editor-controls>[data-winner-selected]{font-size:14px;margin:12px 0}
+.winner-rule{font-size:14px;line-height:1.6;color:var(--violet);margin:18px 0}
+.winner-save-status{font-size:14px;color:#f4dfbd;margin:18px 0 10px}
+.winner-save-status.winner-saved{color:var(--lime)}
+.winner-save-actions{display:flex;flex-wrap:wrap;gap:12px}
+.winner-save-actions button{font-size:16px}
+.winner-gallery-wrap{margin-top:28px;padding-top:22px;border-top:1px solid var(--edge)}
+.winner-gallery-toolbar{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin-bottom:18px}
+.winner-gallery-toolbar label{font-size:14px;flex:1;min-width:160px;max-width:320px}
+.winner-gallery-toolbar input{margin-top:7px}
+.winner-gallery-toolbar>span{font-size:14px;color:var(--violet);margin:auto auto 10px 0}
+.winner-portrait-gallery{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px}
+.winner-portrait-gallery .gallery-portrait span{font-size:14px;padding:8px 3px;line-height:1.4}
+.winner-gallery-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:18px}
+.winner-gallery-pagination>span{font-size:14px;color:var(--violet)}
+.winner-gallery-wrap [data-winner-poses]>.winner-field-label{margin-top:24px;font-size:16px}
+.winner-gallery-wrap .pose-button{width:100px}
+.winner-gallery-wrap .pose-button img{height:135px}
+.winner-gallery-wrap .pose-button span{font-size:14px;padding:6px 3px}
+.winner-message{font-size:14px;margin-top:20px}
+@media(max-width:780px){
+  .winner-panel{padding:22px}
+  .winner-editor-layout{grid-template-columns:160px minmax(0,1fr);gap:22px}
+  .winner-portrait-gallery{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+}
+@media(max-width:520px){
+  .winner-panel{padding:18px}
+  .winner-panel-heading{flex-direction:column;align-items:flex-start;gap:12px}
+  .winner-panel-heading h2{font-size:25px}
+  .winner-editor-layout{grid-template-columns:1fr;gap:24px}
+  .winner-admin-preview{width:min(210px,100%);justify-self:center}
+  .winner-save-actions{flex-direction:column;align-items:stretch}
+  .winner-portrait-gallery{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+  .winner-portrait-gallery .gallery-portrait span{font-size:14px}
+  .winner-gallery-toolbar{gap:12px}
+  .winner-gallery-toolbar label{min-width:100%;max-width:none}
+}

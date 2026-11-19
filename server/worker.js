@@ -265,16 +265,61 @@ export class M2ordle {
       return this.state(token, date);
     });
   }
+  rankedEntries() {
+    return this.all('SELECT person_id AS personId,SUM(points) AS points,SUM(won) AS wins,COUNT(*) AS played,AVG(attempts) AS averageGuesses FROM claims WHERE date<? GROUP BY person_id', ARCHIVE_STARTS)
+      .map(row => ({...row, name: this.people.get(row.personId)?.name || 'Classmate'}))
+      .sort((a, b) => b.points - a.points || b.wins - a.wins || a.averageGuesses - b.averageGuesses || a.name.localeCompare(b.name));
+  }
+  winnerSelection() {
+    const row = this.one("SELECT value FROM settings WHERE key='winner_portrait'");
+    return row ? JSON.parse(row.value) : null;
+  }
+  adminWinner() {
+    const saved = this.winnerSelection(), leader = this.rankedEntries()[0] || null;
+    return {
+      selection: saved ? {personId: saved.personId, name: this.people.get(saved.personId)?.name || 'Classmate', photoId: saved.photoId, image: '/api/admin/winner/image', updated: saved.updated} : null,
+      leader, starts: ARCHIVE_STARTS
+    };
+  }
+  saveWinner(body) {
+    if (body.clear === true) {
+      return this.atomic(() => {
+        this.sql.exec("DELETE FROM settings WHERE key='winner_portrait'");
+        return this.adminWinner();
+      });
+    }
+    if (body.clear !== undefined) fail('Choose a valid portrait action.');
+    if (!this.people.has(body.personId)) fail('Choose a classmate from the roster.');
+    if (!this.photos.has(body.photoId)) fail('Choose an available portrait.');
+    let jpeg;
+    try { jpeg = validateJpeg(body.image); } catch (error) { fail(error.message); }
+    return this.atomic(() => {
+      const previous = this.winnerSelection();
+      const saved = {personId: body.personId, photoId: body.photoId, jpeg, revision: crypto.randomUUID(), updated: Math.max(this.now(), (previous?.updated || 0) + 1)};
+      this.sql.exec("INSERT INTO settings(key,value) VALUES ('winner_portrait',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", JSON.stringify(saved));
+      return this.adminWinner();
+    });
+  }
+  winnerPortrait(url, admin = false) {
+    const saved = this.winnerSelection();
+    if (!saved) fail('No winner portrait has been selected.', 404);
+    if (!admin) {
+      if (centralDate(this.now()) < ARCHIVE_STARTS || this.rankedEntries()[0]?.personId !== saved.personId) fail('The winner portrait is not available.', 404);
+      if (url.searchParams.get('person') !== saved.personId || url.searchParams.get('version') !== saved.revision) fail('This portrait has changed. Refresh to see the current winner.', 404);
+    }
+    const raw = atob(saved.jpeg), bytes = Uint8Array.from(raw, character => character.charCodeAt(0));
+    return new Response(bytes, {headers: {'Content-Type': 'image/jpeg', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}});
+  }
   leaderboard(token) {
     const now = this.now(), date = centralDate(now);
     const claim = token && this.one('SELECT claims.person_id FROM claims JOIN sessions ON sessions.token=claims.session WHERE claims.session=? AND claims.date<? ORDER BY claims.date DESC LIMIT 1', token, ARCHIVE_STARTS);
-    const entries = this.all('SELECT person_id AS personId,SUM(points) AS points,SUM(won) AS wins,COUNT(*) AS played,AVG(attempts) AS averageGuesses FROM claims WHERE date<? GROUP BY person_id', ARCHIVE_STARTS)
-      .map(row => ({...row, name: this.people.get(row.personId)?.name || 'Classmate'}))
-      .sort((a, b) => b.points - a.points || b.wins - a.wins || a.averageGuesses - b.averageGuesses || a.name.localeCompare(b.name));
-    return {date, nextReset: nextCentralMidnight(now), entries: entries.map((row, index) => ({rank: index + 1, ...row, isYou: row.personId === claim?.person_id}))};
+    const entries = this.rankedEntries(), first = entries[0], saved = this.winnerSelection();
+    const winner = date >= ARCHIVE_STARTS && first ? {personId: first.personId, name: first.name, points: first.points, image: saved?.personId === first.personId ? `/api/winner/portrait?person=${encodeURIComponent(first.personId)}&version=${saved.revision}` : null} : null;
+    return {date, nextReset: nextCentralMidnight(now), entries: entries.map((row, index) => ({rank: index + 1, ...row, isYou: row.personId === claim?.person_id})), winner};
   }
   async body(request) {
-    const maxLength = new URL(request.url).pathname === '/api/admin/puzzle' ? 6500000 : 4096;
+    const path = new URL(request.url).pathname;
+    const maxLength = path === '/api/admin/puzzle' ? 6500000 : path === '/api/admin/winner' ? 1010000 : 4096;
     if (Number(request.headers.get('Content-Length')) > maxLength) fail('This request is too large.', 413);
     const reader = request.body?.getReader();
     if (!reader) fail('Please send a valid JSON request.');
@@ -412,6 +457,9 @@ export class M2ordle {
         if (method === 'GET' && path === '/api/admin/auth') return json({ok: true});
         if (method === 'GET' && path === '/api/admin/roster') return json({people: roster.map(({id, name}) => ({id, name, lookbookFacts: this.lookbook.get(id)?.facts || []}))});
         if (method === 'GET' && path === '/api/admin/photos') return json({groups: photos});
+        if (method === 'GET' && path === '/api/admin/winner') return json(this.adminWinner());
+        if (method === 'GET' && path === '/api/admin/winner/image') return this.winnerPortrait(url, true);
+        if (method === 'POST' && path === '/api/admin/winner') return json(this.saveWinner(await this.body(request)));
         if (method === 'GET' && path === '/api/admin/overview') return json(this.adminOverview(url.searchParams.get('date')));
         if (method === 'GET' && path === '/api/admin/calendar') {
           const month = url.searchParams.get('month');
@@ -433,6 +481,7 @@ export class M2ordle {
       if (method === 'GET' && path === '/api/archive') return json(this.archive());
       if (method === 'GET' && path === '/api/roster') return json({people: roster.map(({id, name}) => ({id, name}))});
       if (method === 'GET' && path === '/api/leaderboard') return json(this.leaderboard(bearer(request)));
+      if (method === 'GET' && path === '/api/winner/portrait') return this.winnerPortrait(url);
       if (method === 'POST' && path === '/api/session') {
         await this.body(request);
         this.checkLimit('session:' + ipOf(request), 600, 15 * 60000);

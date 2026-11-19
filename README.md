@@ -20,6 +20,8 @@ At **midnight America/Chicago on November 19, 2026**, the player homepage automa
 
 The archive lists published puzzles from before November 19 by date and puzzle number, without revealing their answers. Players can return to an unfinished replay or start another attempt after completing one. Each replay uses the puzzle's saved clue format: one fact, then all three facts, then three crops for lookbook puzzles, or five crops for photo-only puzzles. Both formats retain five guesses and a full-photo reveal.
 
+The study-period homepage congratulates the actual first-place classmate above the podium and standings. The admin's **First-place celebration** panel lets the owner choose a classmate and a portrait from the existing library before November 19. The selected portrait appears in a pixel frame only if that classmate finishes first. A different winner still receives congratulations, but the mismatched portrait stays hidden until the owner updates it. This selection is independent of puzzle scheduling and never changes scores. Saved portraits remain admin-only before the study period begins; stale public portrait links cannot load a replacement selection.
+
 Replay attempts are stored separately from the original daily games. They never add leaderboard points, change personal statistics or streaks, or overwrite original results. Daily score submissions close at the transition, the leaderboard includes only pre-study-period results, and personal statistics remain frozen at the transition. Drafts and puzzles scheduled on or after November 19 are excluded from the archive.
 
 ## Schedule puzzles

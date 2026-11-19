@@ -1,4 +1,5 @@
 import { openPuzzlePreview, closePuzzlePreview } from './admin-preview.js?v=16';
+import { createWinnerEditor } from './admin-winner.js?v=19';
 
 const $ = id => document.getElementById(id);
 const apiBase = String(window.M2ORDLE_CONFIG?.apiBase || '').replace(/\/$/, '');
@@ -13,6 +14,7 @@ const state = {
   calendarEpoch: 0, calendarLoading: false, calendarLoaded: false,
   overviewEpoch: 0, overviewLoading: false, overview: null, hasSaved: false, locked: false, copyDateEdited: false
 };
+const winnerEditor = createWinnerEditor({root: $('winner-panel'), api, loadImage});
 
 function centralDate() {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -58,6 +60,7 @@ function touchSession() {
 }
 function lock(message = '') {
   closePuzzlePreview();
+  winnerEditor.reset();
   state.password = '';
   state.epoch++;
   state.dayEpoch++;
@@ -169,6 +172,7 @@ $('login-form').addEventListener('submit', async event => {
     $('workspace').hidden = false;
     $('lock-button').hidden = false;
     touchSession();
+    void winnerEditor.load({people: state.people, groups: state.groups});
     await loadCalendar();
     if (epoch !== state.epoch) return;
     await selectDay(state.today, true);
@@ -187,7 +191,7 @@ $('lock-button').addEventListener('click', () => lock());
 for (const event of ['pointerdown', 'keydown']) document.addEventListener(event, touchSession, { passive: true });
 window.addEventListener('pagehide', () => lock());
 window.addEventListener('beforeunload', event => {
-  if (!state.dirty) return;
+  if (!state.dirty && !winnerEditor.dirty) return;
   event.preventDefault();
   event.returnValue = '';
 });

@@ -9,7 +9,7 @@ import {exportClassmates, parseClassmates, renderClassmates} from '../scripts/ex
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'm2ordle-build-'));
   for (const directory of ['public/assets', 'private/portraits', 'server']) await mkdir(join(root, directory), { recursive: true });
-  for (const file of ['index.html', 'app.js', 'styles.css', 'admin.html', 'admin.js', 'admin.css']) await writeFile(join(root, 'public', file), 'fixture');
+  for (const file of ['index.html', 'app.js', 'styles.css', 'admin.html', 'admin.js', 'admin.css', 'admin-winner.js']) await writeFile(join(root, 'public', file), 'fixture');
   await writeFile(join(root, 'public/assets/m2ordle.svg'), '<svg/>');
   await writeFile(join(root, 'public/assets/secret.json'), '{"table":31}');
   await writeFile(join(root, 'public/roster.json'), '{"table":31}');
@@ -41,6 +41,7 @@ test('build keeps tables, private source, and portraits out of Pages; Worker get
   const publicFiles = await files(join(root, 'dist'));
   assert(!publicFiles.some(name => /portraits|roster|secret|lookbook/.test(name)));
   assert(publicFiles.includes('assets/m2ordle.svg'));
+  assert(publicFiles.includes('admin-winner.js'));
   assert.deepEqual(parseClassmates(await readFile(join(root, 'dist/classmates.js'), 'utf8')), [{id:'private-name', name:'Private Name'}]);
   assert.equal(await readFile(join(root, 'dist/config.js'), 'utf8'), 'window.M2ORDLE_CONFIG = {"apiBase":"https://example.workers.dev"};\n');
   const workerFiles = await files(join(root, 'dist-worker'));
@@ -59,6 +60,7 @@ test('static-only build works without private data or server manifests', async t
   const result = await buildSite({ root, staticOnly: true });
   assert.equal(result.workerDirectory, null);
   await access(join(root, 'dist/index.html'));
+  await access(join(root, 'dist/admin-winner.js'));
   assert.deepEqual(parseClassmates(await readFile(join(root, 'dist/classmates.js'), 'utf8')), [{id:'private-name', name:'Private Name'}]);
   await assert.rejects(access(join(root, 'dist-worker')));
 });
